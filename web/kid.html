@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#E7F2F7">
+<title>MoMo 的伙伴</title>
+<link rel="stylesheet" href="/kid.css">
+<script src="/kid.js" defer></script>
+</head>
+<body data-girl="b">
+
+<div id="unpaired" class="cover" hidden>
+  <div class="cover-card">
+    <h1>这台平板还没配对</h1>
+    <p>请妈妈打开家长后台，点「配对平板」，再用这台平板打开生成的链接。</p>
+  </div>
+</div>
+
+<div id="start" class="cover" hidden>
+  <button id="startBtn" class="start-btn" type="button">
+    <img id="startImg" alt="">
+    <span>点一下，叫醒伙伴</span>
+  </button>
+</div>
+
+<main id="app" hidden>
+  <header class="bar">
+    <div class="when"><b id="date"></b><span id="dlabel" class="tag"></span></div>
+    <div id="next" class="next"></div>
+    <div id="alarm" class="tag alarm" hidden></div>
+    <button id="swap" class="ghost" type="button">换伙伴</button>
+  </header>
+
+  <section class="stage" aria-label="伙伴">
+    <div id="bubble" class="bubble" aria-live="polite">
+      <b id="who"></b>
+      <p id="say"></p>
+      <small id="heard" hidden></small>
+    </div>
+    <figure class="girl" id="girlFig"><img id="girlImg" alt=""></figure>
+    <figure class="pet" id="petFig">
+      <img id="petImg" alt="">
+      <figcaption id="petSay" hidden></figcaption>
+    </figure>
+  </section>
+
+  <section class="dock">
+    <div class="talk">
+      <button id="mic" class="mic" type="button">按一下说话</button>
+      <button id="kbd" class="ghost round" type="button">打字</button>
+    </div>
+    <form id="typeForm" class="type" hidden>
+      <input id="typeText" maxlength="100" placeholder="打字也可以" autocomplete="off">
+      <button type="submit">发送</button>
+    </form>
+
+    <div class="panel">
+      <h2>今天要做的事</h2>
+      <ul id="tasks" class="tasks"></ul>
+    </div>
+
+    <div class="panel love">
+      <div class="love-row"><b id="petName"></b><span id="stageName" class="tag"></span></div>
+      <div class="meter"><i id="meterFill"></i></div>
+      <span id="loveText" class="love-text"></span>
+    </div>
+  </section>
+</main>
+
+<div id="picker" class="sheet" hidden>
+  <div class="sheet-card wide" role="dialog" aria-label="换伙伴">
+    <h2>选一个说话的伙伴</h2>
+    <div id="pickGirls" class="pick"></div>
+    <h2>选一个一起长大的宠物</h2>
+    <div id="pickPets" class="pick"></div>
+    <button id="pickClose" class="ghost" type="button">好啦</button>
+  </div>
+</div>
+
+<div id="confirm" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-label="确认">
+    <p id="confirmText"></p>
+    <div class="row">
+      <button id="confirmYes" type="button">做完啦</button>
+      <button id="confirmNo" class="ghost" type="button">还没有</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "momo-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MoMo 的云端伙伴：记得课程表、提醒任务、会随好感度进化的 AI 数字形象",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  }
+}

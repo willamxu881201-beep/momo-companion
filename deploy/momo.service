@@ -1,0 +1,28 @@
+[Unit]
+Description=MoMo companion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=momo
+Group=momo
+WorkingDirectory=/opt/momo-companion
+EnvironmentFile=/etc/momo/momo.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
+Restart=always
+RestartSec=3
+
+# The app only needs to write its database.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/momo
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

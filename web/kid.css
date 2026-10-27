@@ -1,0 +1,157 @@
+/* Kid page: one character on a soft ground in her own colors, a big mic, and
+   today's tasks. Single light theme on purpose: it's a picture book, not a
+   productivity app. */
+:root {
+  --ink: #2A2A33;
+  --ink-2: #5D6270;
+  --card: rgba(255, 255, 255, 0.82);
+  --line: rgba(42, 42, 51, 0.12);
+  --good: #3E9A63;
+  --wait: #C98A1E;
+  --redo: #C2553B;
+  --g1: #E7F2F7;
+  --g2: #CFE5EF;
+  --accent: #3F86A8;
+  --accent-ink: #fff;
+  --font: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+body[data-girl="a"] { --g1: #FBF1F3; --g2: #F3D9E1; --accent: #C8607E; }
+body[data-girl="b"] { --g1: #E7F2F7; --g2: #CFE5EF; --accent: #3F86A8; }
+body[data-girl="c"] { --g1: #F8EFDF; --g2: #EBD7B4; --accent: #A8572E; }
+body[data-girl="d"] { --g1: #EFEBF8; --g2: #D9EEF2; --accent: #6E5BC2; }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--ink);
+  background: linear-gradient(160deg, var(--g1), var(--g2));
+  -webkit-tap-highlight-color: transparent;
+  overflow-y: auto;
+  transition: background 0.4s ease;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
+
+/* covers ------------------------------------------------------------------ */
+.cover { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; z-index: 30;
+  background: linear-gradient(160deg, var(--g1), var(--g2)); }
+.cover-card { max-width: 520px; background: var(--card); border-radius: 24px; padding: 28px 30px; text-align: center; }
+.cover-card h1 { margin: 0 0 8px; font-size: 26px; }
+.cover-card p { margin: 0; color: var(--ink-2); font-size: 18px; line-height: 1.7; }
+.start-btn { border: 0; background: none; display: grid; justify-items: center; gap: 14px; }
+.start-btn img { width: min(56vw, 360px); aspect-ratio: 3 / 4; object-fit: cover; border-radius: 32px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15); }
+.start-btn span { font-size: 26px; font-weight: 700; color: var(--accent); background: var(--card);
+  padding: 12px 28px; border-radius: 999px; }
+
+/* layout ------------------------------------------------------------------ */
+/* Portrait (phones, upright tablets): bar, bubble, characters, dock stacked;
+   the page may scroll. Landscape tablets: characters left, dock right, no scroll. */
+#app { min-height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start;
+  padding: max(10px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+@media (min-width: 900px) and (orientation: landscape) {
+  body { overflow: hidden; }
+  #app { height: 100%; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); grid-template-rows: auto 1fr; }
+  .bar { grid-column: 1 / -1; }
+  .dock { align-self: stretch; overflow-y: auto; }
+}
+
+.bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 18px; }
+.when { display: flex; align-items: center; gap: 8px; }
+.when b { font-size: 22px; }
+.tag { display: inline-block; padding: 3px 12px; border-radius: 999px; background: var(--card); font-weight: 700; color: var(--accent); }
+.tag.alarm { color: var(--ink); font-weight: 500; }
+.next { color: var(--ink-2); flex: 1 1 200px; min-width: 0; }
+.ghost { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 8px 16px; }
+.ghost.round { width: 64px; height: 64px; padding: 0; font-size: 17px; flex: none; }
+
+/* stage ------------------------------------------------------------------- */
+.stage { position: relative; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.62fr);
+  grid-template-areas: "bubble bubble" "girl pet"; align-items: end; gap: 10px; }
+.stage figure { margin: 0; position: relative; min-width: 0; }
+.girl { grid-area: girl; }
+.pet { grid-area: pet; }
+/* Images crop from the edges, keeping the face (top of the bust) in view. */
+.stage img { display: block; width: 100%; object-fit: cover; object-position: 50% 15%;
+  border-radius: 28px; box-shadow: 0 18px 40px rgba(30, 40, 60, 0.12); background: var(--card); }
+.girl img { height: min(46vh, 560px); }
+.pet img { height: min(32vh, 400px); }
+@media (min-width: 900px) and (orientation: landscape) {
+  .stage { grid-template-areas: "girl pet"; }
+  .stage img { height: auto; aspect-ratio: 3 / 4; }
+  .girl img { max-height: min(62vh, 640px); }
+  .pet img { max-height: min(40vh, 420px); }
+  .bubble { position: absolute; left: 0; right: 0; top: 0; margin: 0 auto; }
+}
+.girl, .pet { animation: breathe 4.5s ease-in-out infinite; transform-origin: 50% 100%; }
+.pet { animation-duration: 3.6s; }
+.girl.talking { animation: talk 0.42s ease-in-out infinite; }
+.pet.react { animation: hop 0.5s ease-out 2; }
+@keyframes breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.008); } }
+@keyframes talk { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-16px); } }
+
+.bubble { grid-area: bubble; max-width: 720px; z-index: 2;
+  background: #fff; border-radius: 22px; padding: 14px 20px; box-shadow: 0 10px 30px rgba(30, 40, 60, 0.12); }
+.bubble b { color: var(--accent); font-size: 17px; }
+.bubble p { margin: 4px 0 0; font-size: clamp(20px, 2.6vw, 28px); line-height: 1.5; }
+.bubble small { display: block; margin-top: 6px; color: var(--ink-2); font-size: 15px; }
+.pet figcaption { position: absolute; left: 8px; right: 8px; bottom: 10px; text-align: center; background: #fff;
+  border-radius: 14px; padding: 6px 10px; font-size: 17px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1); }
+
+/* dock -------------------------------------------------------------------- */
+.dock { display: grid; gap: 12px; align-content: start; min-height: 0; }
+.talk { display: flex; gap: 12px; align-items: center; justify-content: center; }
+.mic { flex: 1; max-width: 420px; height: 76px; border: 0; border-radius: 999px; background: var(--accent);
+  color: var(--accent-ink); font-size: 26px; font-weight: 700; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.15); }
+.mic.listening { background: #D9534F; animation: pulse 1.2s ease-in-out infinite; }
+.mic.busy { opacity: 0.6; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 83, 79, 0.45); } 50% { box-shadow: 0 0 0 16px rgba(217, 83, 79, 0); } }
+.type { display: flex; gap: 8px; }
+.type input { flex: 1; min-width: 0; font: inherit; font-size: 20px; padding: 10px 14px; border-radius: 14px; border: 1px solid var(--line); }
+.type button { border: 0; border-radius: 14px; padding: 0 18px; background: var(--accent); color: var(--accent-ink); font-size: 18px; }
+
+.panel { background: var(--card); border-radius: 20px; padding: 12px 16px; }
+.panel h2 { margin: 0 0 8px; font-size: 17px; color: var(--ink-2); font-weight: 600; }
+.tasks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.tasks button { width: 100%; display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 10px;
+  text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; font-size: 19px; }
+.tasks .icon { font-size: 26px; text-align: center; }
+.tasks .time { font-size: 15px; color: var(--ink-2); }
+.tasks .st { font-size: 15px; font-weight: 700; white-space: nowrap; }
+.tasks .waiting .st { color: var(--wait); }
+.tasks .confirmed .st { color: var(--good); }
+.tasks .redo .st { color: var(--redo); }
+.tasks .confirmed, .tasks .waiting { opacity: 0.85; }
+.tasks .empty { color: var(--ink-2); font-size: 17px; }
+
+.love-row { display: flex; align-items: center; gap: 8px; font-size: 18px; }
+.meter { height: 14px; border-radius: 999px; background: rgba(0, 0, 0, 0.08); overflow: hidden; margin: 8px 0 4px; }
+.meter i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
+.love-text { font-size: 15px; color: var(--ink-2); }
+
+/* sheets ------------------------------------------------------------------ */
+.sheet { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px;
+  background: rgba(20, 24, 32, 0.4); }
+.sheet-card { background: #fff; border-radius: 24px; padding: 20px 22px; width: min(480px, 100%); max-height: 92vh; overflow-y: auto; }
+.sheet-card.wide { width: min(920px, 100%); }
+.sheet-card h2 { margin: 6px 0 10px; font-size: 20px; }
+.sheet-card p { font-size: 22px; margin: 4px 0 16px; text-align: center; }
+.sheet-card .row { display: flex; gap: 12px; justify-content: center; }
+.sheet-card .row button:not(.ghost) { border: 0; border-radius: 999px; padding: 12px 28px; background: var(--accent); color: #fff; font-size: 20px; font-weight: 700; }
+.pick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 8px; }
+.pick button { border: 3px solid transparent; border-radius: 18px; padding: 0; background: #f4f5f7; overflow: hidden; display: grid; }
+.pick button[aria-pressed="true"] { border-color: var(--accent); }
+.pick img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; }
+.pick span { padding: 6px 4px 8px; font-size: 17px; font-weight: 600; }
+#pickClose { display: block; margin: 8px auto 0; }
+
+@media (max-width: 600px) {
+  .pick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mic { height: 64px; font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .girl, .pet, .girl.talking, .pet.react, .mic.listening { animation: none; }
+}

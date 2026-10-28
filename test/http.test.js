@@ -116,6 +116,28 @@ test('the kid link opens the page on any device; a new link retires the old one'
   assert.equal((await get('/api/state', { Cookie: fresh.cookie })).status, 200);
 });
 
+test("a kid page's screen and browser go to the server log, tidied", async () => {
+  const { cookie: kid } = await openKidLink(auth.kidKey());
+  const logged = [];
+  const log = console.log;
+  console.log = (line) => logged.push(line);
+  try {
+    const res = await fetch(base + '/api/hello', {
+      method: 'POST',
+      headers: { Cookie: kid, 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 (HarmonyOS) ArkWeb/4.1.6.1' },
+      body: JSON.stringify({ w: 961.4, h: 584, dpr: 'x', extra: 'ignored' }),
+    });
+    assert.equal(res.status, 200);
+    await res.arrayBuffer();
+  } finally {
+    console.log = log;
+  }
+  assert.deepEqual(logged, ['[kid] screen 961.4x584 @0 Mozilla/5.0 (HarmonyOS) ArkWeb/4.1.6.1']);
+  const stranger = await fetch(base + '/api/hello', { method: 'POST', body: '{}' });
+  assert.equal(stranger.status, 401);
+  await stranger.arrayBuffer();
+});
+
 test('the tablet is told when it is quiet time', async () => {
   const { cookie: kid } = await openKidLink(auth.kidKey());
   const headers = { Cookie: kid };

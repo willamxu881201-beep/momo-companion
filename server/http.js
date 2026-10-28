@@ -9,7 +9,9 @@ import { addDays, dateZh, isDate, timeToMinutes } from './dates.js';
 import { KID_COOKIE, KID_TTL_S, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
 import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
 import { inQuiet } from './events.js';
-import { synthesize, transcribe, wavRms, wavSeconds } from './speech.js';
+import { ARK_ORIGIN } from './ark.js';
+import { warm } from './client.js';
+import { SPEECH_ORIGIN, synthesize, transcribe, transcribeFlash, wavRms, wavSeconds } from './speech.js';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -37,7 +39,32 @@ class HttpError extends Error {
 }
 
 export function createHandler({ config, store, family, brain, auth, hub, webDir }) {
+  // Speech is made once per (voice, line): the chat route starts it as soon as the
+  // reply exists, and the tablet's /api/tts request picks up the same promise.
   const ttsCache = new Map();
+  function speech(raw) {
+    const text = String(raw || '').slice(0, 300);
+    if (!text || !config.ttsAppId) return null;
+    const speaker = family.profile().girlInfo.voice;
+    const key = `${speaker}|${text}`;
+    let pending = ttsCache.get(key);
+    if (!pending) {
+      const today = family.now().date;
+      if (store.usage(today, 'tts') + text.length > config.limits.ttsCharsPerDay) return null;
+      store.addUsage(today, 'tts', text.length);
+      pending = synthesize({ appId: config.ttsAppId, token: config.ttsToken, speaker, text }).catch((err) => {
+        console.error('[tts]', err.message);
+        return null;
+      });
+      pending.then((audio) => audio || ttsCache.delete(key));
+      ttsCache.set(key, pending);
+      if (ttsCache.size > 80) ttsCache.delete(ttsCache.keys().next().value);
+    }
+    return pending;
+  }
+  // Doubao's flash recogniser is far faster from here than Ark. Until the speech app
+  // has it enabled, fall back to Ark and only try flash again every ten minutes.
+  let flashOffUntil = 0;
   const routes = [];
   const on = (method, path, access, fn) => routes.push({ method, path, access, fn });
 
@@ -69,6 +96,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     }
     store.addUsage(today, 'chat');
     const r = await brain.reply(ctx.kid ? 'kid' : 'parent', ctx.body.text);
+    speech(r.reply);
     return { ...r, state: kidState() };
   });
 
@@ -81,27 +109,36 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     const today = family.now().date;
     if (store.usage(today, 'asr') >= config.limits.asrPerDay) throw new HttpError(429, '今天的语音次数用完了');
     store.addUsage(today, 'asr');
+    if (config.ttsAppId && Date.now() > flashOffUntil) {
+      try {
+        return { text: await transcribeFlash({ appId: config.ttsAppId, token: config.ttsToken, wav }) };
+      } catch (err) {
+        if (err.code) flashOffUntil = Date.now() + 10 * 60000; // refused, not a network hiccup
+        console.warn('[asr] flash recogniser not used:', err.message);
+      }
+    }
     const text = await transcribe({ apiKey: config.arkApiKey, model: config.asrModel, wavBase64: wav.toString('base64') });
     return { text };
   });
 
+  // A kid page just woke up: note its screen and browser, to tune the layout for real devices.
+  on('POST', '/api/hello', 'kid', (ctx) => {
+    const n = (v) => Math.round(Math.min(Math.max(Number(v) || 0, 0), 10000) * 100) / 100;
+    const ua = String(ctx.req.headers['user-agent'] || '').replace(/[^\x20-\x7e]/g, '').slice(0, 240);
+    console.log(`[kid] screen ${n(ctx.body.w)}x${n(ctx.body.h)} @${n(ctx.body.dpr)} ${ua}`);
+    return { ok: true };
+  });
+
+  // The mic just opened: get connections ready while the child talks.
+  on('POST', '/api/warm', 'kid', () => {
+    warm([ARK_ORIGIN], 2);
+    if (config.ttsAppId) warm([SPEECH_ORIGIN]);
+    return { ok: true };
+  });
+
   on('POST', '/api/tts', 'kid', async (ctx) => {
-    const text = String(ctx.body.text || '').slice(0, 300);
-    if (!text || !config.ttsAppId) return { status: 204 };
-    const { girlInfo } = family.profile();
-    const speaker = girlInfo.voice;
-    const key = `${speaker}|${text}`;
-    let audio = ttsCache.get(key);
-    if (!audio) {
-      const today = family.now().date;
-      if (store.usage(today, 'tts') + text.length > config.limits.ttsCharsPerDay) return { status: 204 };
-      store.addUsage(today, 'tts', text.length);
-      audio = await synthesize({ appId: config.ttsAppId, token: config.ttsToken, speaker, text });
-      if (!audio) return { status: 204 };
-      ttsCache.set(key, audio);
-      if (ttsCache.size > 80) ttsCache.delete(ttsCache.keys().next().value);
-    }
-    return { status: 200, type: 'audio/mpeg', body: audio };
+    const audio = await speech(ctx.body.text);
+    return audio ? { status: 200, type: 'audio/mpeg', body: audio } : { status: 204 };
   });
 
   on('POST', '/api/tasks/:id/done', 'kid', (ctx) => {

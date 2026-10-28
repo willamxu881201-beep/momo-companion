@@ -96,6 +96,23 @@ export class Brain {
     let snap = this.family.snapshot();
     const results = [];
     const actions = [];
+    const speak = (facts, done) =>
+      arkChat({
+        apiKey: this.apiKey,
+        model: this.personaModel,
+        messages: [
+          { role: 'system', content: personaPrompt(this.family, facts, done) },
+          ...history,
+          { role: 'user', content: userText },
+        ],
+        maxTokens: 180,
+      });
+
+    // Most turns need no tool, so the character starts answering while the router
+    // decides. If a tool does run, that early answer is dropped and the character
+    // is asked again with the result.
+    const early = speak(snap, []);
+    early.catch(() => {}); // a dropped answer must not become an unhandled rejection
 
     try {
       const routed = await arkChat({
@@ -117,16 +134,7 @@ export class Brain {
 
     let raw;
     try {
-      const spoken = await arkChat({
-        apiKey: this.apiKey,
-        model: this.personaModel,
-        messages: [
-          { role: 'system', content: personaPrompt(this.family, snap, results) },
-          ...history,
-          { role: 'user', content: userText },
-        ],
-        maxTokens: 180,
-      });
+      const spoken = await (results.length ? speak(snap, results) : early);
       raw = spoken.content;
     } catch (err) {
       console.error('[brain] persona failed:', err.message);

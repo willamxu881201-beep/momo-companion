@@ -55,4 +55,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .courses { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
 .courses .day { display: grid; gap: 6px; }
 .pair { display: flex; gap: 8px; }
-.pair input { flex: 1; }
+.pair input { flex: 1 1 0; width: 0; } /* width 0: the link is long and must not widen the card */
+.pair button { flex: none; }

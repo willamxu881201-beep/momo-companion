@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#94b8c7">
 <title>MoMo 的伙伴</title>
 <link rel="stylesheet" href="/kid.css">
@@ -47,7 +47,6 @@
     <div class="when"><b id="date" class="glass"></b><span id="dlabel" class="tag"></span></div>
     <div id="next" class="next glass"></div>
     <div id="alarm" class="tag alarm glass" hidden></div>
-    <button id="swap" class="ghost glass" type="button">换伙伴</button>
   </header>
 
   <section id="bubble" class="bubble glass" aria-live="polite">
@@ -62,7 +61,7 @@
       <ul id="tasks" class="tasks"></ul>
     </div>
     <div class="panel glass love">
-      <div class="love-row"><b id="petName"></b><span id="stageName" class="tag"></span></div>
+      <div class="love-row"><b id="petName"></b><span id="stageName" class="tag"></span><button id="swap" class="ghost small" type="button">换伙伴</button></div>
       <div class="meter"><i id="meterFill"></i></div>
       <span id="loveText" class="love-text"></span>
     </div>

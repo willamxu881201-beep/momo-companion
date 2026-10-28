@@ -351,9 +351,8 @@ async function speak(text) {
       });
       if (!mine()) return; // a newer line took over while this one was fetched
       if (res.status === 200) {
-        const url = URL.createObjectURL(await res.blob());
-        if (mine()) await playAudio(url, () => mouth(true));
-        URL.revokeObjectURL(url);
+        const bytes = await res.arrayBuffer();
+        if (mine()) await playClip(bytes, () => mouth(true));
         return;
       }
     }
@@ -365,14 +364,75 @@ async function speak(text) {
   }
 }
 
-function playAudio(url, onStart) {
-  return new Promise((resolve) => {
-    const a = new Audio(url);
-    currentAudio = a;
-    a.onplaying = onStart;
-    a.onended = a.onerror = a.onpause = () => resolve();
-    a.play().catch(() => resolve());
-  });
+// Replies arrive seconds after the last tap, and phone browsers (Huawei's among them)
+// often refuse to start an <audio> element by then. So sound goes through one Web Audio
+// context that every tap keeps unlocked; an <audio> element is the fallback.
+function unlockAudio() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  const fresh = !audioCtx;
+  if (fresh) audioCtx = new Ctx();
+  if (!fresh && audioCtx.state === 'running') return;
+  audioCtx.resume().catch(() => {});
+  // A silent blip started inside the tap is what some browsers need before they allow sound later.
+  const blip = audioCtx.createBufferSource();
+  blip.buffer = audioCtx.createBuffer(1, 1, 22050);
+  blip.connect(audioCtx.destination);
+  blip.start(0);
+}
+// On a touch screen the finger lifting (pointerup, touchend) is what counts as a tap for
+// sound, not the finger landing, so listen for both.
+for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown']) {
+  document.addEventListener(type, unlockAudio, { passive: true, capture: true });
+}
+
+async function playClip(bytes, onStart) {
+  if (audioCtx) {
+    try {
+      if (audioCtx.state !== 'running') await audioCtx.resume();
+      const buffer = await audioCtx.decodeAudioData(bytes.slice(0));
+      if (audioCtx.state === 'running') {
+        await new Promise((resolve) => {
+          const src = audioCtx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(audioCtx.destination);
+          src.onended = () => resolve();
+          currentAudio = {
+            stop() {
+              try {
+                src.stop();
+              } catch {
+                /* already stopped */
+              }
+              resolve();
+            },
+          };
+          src.start();
+          onStart();
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('web audio failed, trying <audio>', err);
+    }
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+  try {
+    await new Promise((resolve) => {
+      const a = new Audio(url);
+      currentAudio = {
+        stop() {
+          a.pause();
+          resolve();
+        },
+      };
+      a.onplaying = onStart;
+      a.onended = a.onerror = a.onpause = () => resolve();
+      a.play().catch(() => resolve());
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function browserSpeak(text, onStart) {
@@ -396,7 +456,7 @@ function stopSpeaking() {
   speakSeq += 1; // whatever line was in progress is no longer ours
   look.speaking = false;
   if (currentAudio) {
-    currentAudio.pause();
+    currentAudio.stop();
     currentAudio = null;
   }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
@@ -458,6 +518,7 @@ function setBusy(on, label) {
 
 async function startListening() {
   stopSpeaking();
+  fetch('/api/warm', { method: 'POST' }).catch(() => {}); // server opens its connections while the child talks
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
@@ -469,7 +530,7 @@ async function startListening() {
   }
   const src = audioCtx.createMediaStreamSource(stream);
   const proc = audioCtx.createScriptProcessor(4096, 1, 1);
-  const r = { stream, src, proc, bufs: [], total: 0, heard: false, silentMs: 0, t0: Date.now(), rate: audioCtx.sampleRate };
+  const r = { stream, src, proc, bufs: [], total: 0, heard: false, silentMs: 0, first: -1, last: -1, t0: Date.now(), rate: audioCtx.sampleRate };
   proc.onaudioprocess = (e) => {
     const d = e.inputBuffer.getChannelData(0);
     r.bufs.push(new Float32Array(d));
@@ -480,10 +541,12 @@ async function startListening() {
     if (rms > 0.02) {
       r.heard = true;
       r.silentMs = 0;
+      if (r.first < 0) r.first = r.bufs.length - 1;
+      r.last = r.bufs.length - 1;
     } else if (r.heard) {
       r.silentMs += (d.length / r.rate) * 1000;
     }
-    if ((r.heard && r.silentMs > 1300) || Date.now() - r.t0 > 15000) stopListening();
+    if ((r.heard && r.silentMs > 1000) || Date.now() - r.t0 > 15000) stopListening();
   };
   src.connect(proc);
   proc.connect(audioCtx.destination);
@@ -507,7 +570,10 @@ async function stopListening() {
   }
   setBusy(true, '在听…');
   try {
-    const wav = encodeWav16k(r.bufs, r.total, r.rate);
+    // Only the stretch with speech in it, plus a little air: from here every second of
+    // audio costs real upload time on the way to the recogniser.
+    const speech = r.bufs.slice(Math.max(0, r.first - 3), r.last + 4);
+    const wav = encodeWav16k(speech, speech.reduce((n, b) => n + b.length, 0), r.rate);
     const { text } = await api('/api/asr', { wav });
     setBusy(false);
     if (text) await send(text);
@@ -695,12 +761,17 @@ $('startBtn').addEventListener('click', async () => {
   $('app').hidden = false;
   girl.prime();
   pet.prime();
-  const Ctx = window.AudioContext || window.webkitAudioContext;
-  audioCtx = new Ctx();
-  await audioCtx.resume().catch(() => {});
+  unlockAudio();
+  if (audioCtx) await audioCtx.resume().catch(() => {});
   if ('speechSynthesis' in window) speechSynthesis.getVoices();
   wakeLock();
   connectEvents();
+  // The server logs the screen size and browser, so layouts can be tuned for the real devices.
+  fetch('/api/hello', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio }),
+  }).catch(() => {});
   if (state) render(state); // someone is watching now, so a new pet stage can be announced
   const kid = state ? state.profile.kidName : '';
   mood('happy', 2000);

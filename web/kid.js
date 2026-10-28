@@ -529,7 +529,8 @@ function placeBubble() {
     const ny = Math.max(b.t, Math.min(my, b.b));
     const reach = (Math.hypot(nx - mx, ny - my) / (face.r - face.l)) * 6; // in face widths, so any screen size weighs the same
     const bodyHit = overlap(b, body) / area(b); // rather empty space than over her clothes
-    const score = (out / area(b)) * 40 + faceHit * 60 + petHit * 25 + bodyHit * 12 + reach;
+    let score = (out / area(b)) * 40 + faceHit * 60 + petHit * 25 + bodyHit * 12 + reach;
+    if (bubble.mode === 'think' && c.side === 'below') score += 4; // thoughts float up by her head
     c.score = score;
     if (!best || score < best.score) best = { ...c, box: b, score };
   }

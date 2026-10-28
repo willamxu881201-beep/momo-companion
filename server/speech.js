@@ -2,8 +2,8 @@
 //  - Listening: the tablet records 16 kHz mono WAV. Doubao's flash recogniser
 //    (openspeech) answers in a fraction of a second because it has an edge node
 //    next to the server; when the speech app hasn't enabled it, we fall back to
-//    Ark's multimodal model, which is much slower from here for longer clips.
-//    Audio is never written to disk.
+//    Ark's multimodal model in Beijing, about 2 s for a few seconds of speech
+//    (with BBR, see deploy/sysctl-momo.conf). Audio is never written to disk.
 //  - Speaking: Doubao TTS 2.0 (openspeech, v3 unidirectional API). If its
 //    credentials are missing, the tablet falls back to the browser's voice.
 
@@ -50,7 +50,7 @@ export async function transcribe({ apiKey, model, wavBase64 }) {
     apiKey,
     model,
     maxTokens: 200,
-    timeoutMs: 40000, // a few seconds of audio can take 20 s to upload from here
+    timeoutMs: 40000, // the upload to Beijing took up to 20 s before BBR; keep the margin
     messages: [
       { role: 'system', content: ASR_PROMPT },
       {

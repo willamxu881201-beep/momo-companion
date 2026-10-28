@@ -88,9 +88,13 @@ export class Brain {
     this.histories.delete(key);
   }
 
-  async reply(key, text) {
+  // onEarly(reply) hears the character's answer the moment it exists, before the
+  // router has decided whether it stands, so its voice can be made in the meantime.
+  async reply(key, text, { onEarly } = {}) {
     const userText = String(text || '').trim().slice(0, 300);
     if (!userText) return { reply: '我在呢，你想说什么呀？', petAction: null, actions: [] };
+    const t0 = Date.now();
+    const took = {};
 
     const history = this.history(key);
     let snap = this.family.snapshot();
@@ -112,7 +116,14 @@ export class Brain {
     // decides. If a tool does run, that early answer is dropped and the character
     // is asked again with the result.
     const early = speak(snap, []);
-    early.catch(() => {}); // a dropped answer must not become an unhandled rejection
+    let decided = false;
+    early.then(
+      (r) => {
+        took.persona = Date.now() - t0;
+        if (onEarly && !(decided && results.length)) onEarly(splitReply(r.content).reply);
+      },
+      () => {}, // a dropped answer must not become an unhandled rejection
+    );
 
     try {
       const routed = await arkChat({
@@ -131,6 +142,8 @@ export class Brain {
     } catch (err) {
       console.error('[brain] router failed:', err.message);
     }
+    decided = true;
+    took.router = Date.now() - t0;
 
     let raw;
     try {
@@ -144,6 +157,8 @@ export class Brain {
     const { reply, petAction } = splitReply(raw);
     this.remember(key, userText, reply);
     const points = this.family.awardChat();
+    // Timings only, never the words.
+    console.log(`[brain] router ${took.router} ms${results.length ? ` (${results.length} tool results, persona again)` : ''}, persona ${took.persona ?? '-'} ms, reply ${Date.now() - t0} ms, ${reply.length} chars`);
     return { reply, petAction, actions, points };
   }
 

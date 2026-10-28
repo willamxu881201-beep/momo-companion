@@ -49,10 +49,11 @@
     <div id="alarm" class="tag alarm glass" hidden></div>
   </header>
 
-  <section id="bubble" class="bubble glass" aria-live="polite">
-    <b id="who"></b>
+  <section id="bubble" class="bubble" aria-live="polite" hidden>
+    <div class="frost"></div>
+    <svg class="shape" aria-hidden="true"><path></path></svg>
     <p id="say"></p>
-    <small id="heard" hidden></small>
+    <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
   </section>
 
   <aside class="side">
@@ -68,6 +69,7 @@
   </aside>
 
   <div class="dock">
+    <p id="heard" class="heard glass" hidden></p>
     <form id="typeForm" class="type glass" hidden>
       <input id="typeText" maxlength="100" placeholder="打字也可以" autocomplete="off">
       <button type="submit">发送</button>

@@ -54,7 +54,14 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
       if (store.usage(today, 'tts') + text.length > config.limits.ttsCharsPerDay) return null;
       store.addUsage(today, 'tts', text.length);
       clip = new Clip();
-      tts({ appId: config.ttsAppId, token: config.ttsToken, speaker, text, onAudio: (audio) => clip.add(audio) })
+      const t0 = Date.now();
+      let first = 0;
+      const onAudio = (audio) => {
+        if (!first) first = Date.now() - t0;
+        clip.add(audio);
+      };
+      tts({ appId: config.ttsAppId, token: config.ttsToken, speaker, text, onAudio })
+        .then(() => console.log(`[tts] ${text.length} chars: first audio ${first} ms, whole line ${Date.now() - t0} ms`))
         .catch((err) => {
           console.error('[tts]', err.message);
           clips.delete(key);
@@ -98,7 +105,9 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
       return { reply: '今天我们聊了好多啦，我的嗓子要休息一下，明天再陪你聊好不好？', petAction: null, actions: [], limited: true };
     }
     store.addUsage(today, 'chat');
-    const r = await brain.reply(ctx.kid ? 'kid' : 'parent', ctx.body.text);
+    // The voice for the character's first answer starts while the router still decides;
+    // if a tool changes the answer, that clip just goes unused.
+    const r = await brain.reply(ctx.kid ? 'kid' : 'parent', ctx.body.text, { onEarly: speech });
     speech(r.reply);
     return { ...r, state: kidState() };
   });
@@ -112,9 +121,13 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
     const today = family.now().date;
     if (store.usage(today, 'asr') >= config.limits.asrPerDay) throw new HttpError(429, '今天的语音次数用完了');
     store.addUsage(today, 'asr');
+    const t0 = Date.now();
+    const took = (how) => console.log(`[asr] ${how} ${Date.now() - t0} ms for ${seconds.toFixed(1)} s of speech`);
     if (config.ttsAppId && Date.now() > flashOffUntil) {
       try {
-        return { text: await flashAsr({ appId: config.ttsAppId, token: config.ttsToken, wav }) };
+        const text = await flashAsr({ appId: config.ttsAppId, token: config.ttsToken, wav });
+        took('flash');
+        return { text };
       } catch (err) {
         // Not granted, or the keys are refused: stop asking for a while. Anything else
         // (busy, a network hiccup) only sends this one clip to Ark.
@@ -123,6 +136,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
       }
     }
     const text = await arkAsr({ apiKey: config.arkApiKey, model: config.asrModel, wavBase64: wav.toString('base64') });
+    took('ark');
     return { text };
   });
 

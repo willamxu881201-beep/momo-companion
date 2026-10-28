@@ -49,7 +49,14 @@ async function arkAsr() {
   heard.push('ark');
   return '明天上什么课';
 }
-const brain = { reply: async () => ({ reply: '明天见', petAction: null, actions: [] }) };
+// The brain hands over its early answer before it has finished, as the real one does.
+const brain = {
+  async reply(key, text, { onEarly } = {}) {
+    onEarly('明天见');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return { reply: '明天见', petAction: null, actions: [] };
+  },
+};
 const hub = { size: 0, send() {} };
 const server = createServer(createHandler({ config, store, family, brain, auth, hub, webDir, tts, flashAsr, arkAsr }));
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -99,10 +106,10 @@ test('two tablets asking at once share one synthesis', async () => {
   assert.equal(calls.filter((t) => t === '一起').length, 1);
 });
 
-test('the reply is voiced as soon as it exists, before the tablet asks', async () => {
+test('the reply is voiced as soon as it exists, before the tablet asks, and only once', async () => {
   const chat = await post('/api/chat', { text: '明天见' });
   assert.equal((await chat.json()).reply, '明天见');
-  assert.ok(calls.includes('明天见'), 'synthesis started with the reply');
+  assert.ok(calls.includes('明天见'), 'synthesis started from the early answer');
   const { bytes } = await readAll(await post('/api/tts', { text: '明天见' }));
   assert.deepEqual(bytes, [1, 2, 3, 4, 5, 6]);
   assert.equal(calls.filter((t) => t === '明天见').length, 1);

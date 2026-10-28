@@ -164,7 +164,7 @@ class Figure {
 
 const girl = new Figure($('girlFig'));
 const pet = new Figure($('petFig'));
-const look = { speaking: false, thinking: false, mood: null, petMood: null };
+const look = { speaking: false, thinking: false, mood: null, petMood: null, feel: null };
 
 // Most important first: a passing mood, talking, thinking, asleep at night, idle.
 function pose() {
@@ -176,6 +176,7 @@ function pose() {
   else if (state.quiet) girl.show({ img: face('sleepy') });
   else girl.show({ loop: 'idle' });
   girl.fig.classList.toggle('talking', look.speaking);
+  girl.fig.dataset.feel = look.speaking && look.feel ? look.feel : '';
 
   const p = `/img/pet/${state.profile.pet}_${state.affinity.stage}`;
   if (look.petMood) pet.show({ img: `${p}_${look.petMood}.jpg` });
@@ -217,7 +218,6 @@ function render(s) {
   $('girlImg').alt = s.girls[g] ? s.girls[g].name : '';
   $('petImg').alt = s.pets[p] ? s.pets[p].name : '';
   $('startImg').src = `/img/girl_${g}.jpg`;
-  $('who').textContent = s.girls[g] ? s.girls[g].name : '';
   $('date').textContent = s.dateZh;
   $('dlabel').textContent = s.today.label;
 
@@ -265,6 +265,7 @@ function render(s) {
 
   noteStage(s);
   pose();
+  placeBubble();
 
   if (!started) {
     $('locked').hidden = true;
@@ -303,68 +304,289 @@ function toMin(hhmm) {
 
 // ---- speaking ----------------------------------------------------------------
 
-function say(text, petAction) {
+// A line is performed in one piece. Until her voice is ready she thinks, with dots
+// by her mouth. The moment it starts, the words appear there, she talks, the line's
+// mood moves her and the pet reacts, all for exactly as long as the voice lasts;
+// then the mood stays on her face for a moment.
+async function say(text, { pet: petAction = null, mood: feel = null } = {}) {
+  let evolving = false;
   if (evolved) {
     text = `${text}哇！${evolved}`;
     evolved = null;
     petAction = petAction || '✨ 进化啦 ✨';
-    mood('cheer', 3000);
-    const fig = $('petFig');
-    fig.classList.remove('evolve');
-    void fig.offsetWidth;
-    fig.classList.add('evolve');
-    clearTimeout(say.evolveTimer);
-    say.evolveTimer = setTimeout(() => fig.classList.remove('evolve'), 4500);
+    feel = 'cheer';
+    evolving = true;
   }
-  $('say').textContent = text;
-  if (petAction) {
-    $('petSay').textContent = petAction;
-    $('petSay').hidden = false;
-    const fig = $('petFig');
-    fig.classList.remove('react');
-    void fig.offsetWidth;
-    fig.classList.add('react');
-    clearTimeout(say.petTimer);
-    say.petTimer = setTimeout(() => ($('petSay').hidden = true), 6000);
-    petMood('happy');
-  }
-  return speak(text);
+  const finished = await speak(text, () => {
+    showWords(text);
+    look.feel = feel;
+    if (petAction) {
+      petCaption(petAction);
+      replay($('petFig'), 'react');
+      petMood('happy', 20000); // ends with the line, see below
+    }
+    if (evolving) {
+      replay($('petFig'), 'evolve');
+      clearTimeout(say.evolveTimer);
+      say.evolveTimer = setTimeout(() => $('petFig').classList.remove('evolve'), 4500);
+    }
+    pose();
+  });
+  if (!finished) return; // a newer line took over
+  look.feel = null;
+  if (petAction) petCaption(petAction, 1500);
+  if (look.petMood === 'happy') petMood('happy', 600);
+  if (feel) mood(feel, 1500);
+  else pose();
 }
 
-async function speak(text) {
+// Plays the line's voice. onStart runs when the sound starts (or, if there is no
+// voice at all, at the end, so the words still appear). Resolves true when the
+// line ran to its end, false when a newer one took over.
+async function speak(text, onStart = () => {}) {
   stopSpeaking();
   const my = ++speakSeq;
   const mine = () => my === speakSeq;
-  // Her mouth moves only while there is sound; until then she keeps her thinking face.
-  const mouth = (on) => {
-    if (!mine()) return;
-    look.speaking = on;
+  let begun = false;
+  const begin = () => {
+    if (!mine() || begun) return;
+    begun = true;
     look.thinking = false;
+    look.speaking = true;
+    onStart();
     pose();
   };
+  look.thinking = true;
+  pose();
+  showThinking();
   try {
+    let res = null;
     if (state && state.tts) {
-      const res = await fetch('/api/tts', {
+      res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
       if (!mine()) {
-        if (res.body) res.body.cancel().catch(() => {}); // a newer line took over meanwhile
-        return;
-      }
-      if (res.status === 200) {
-        await playVoice(res, mine, () => mouth(true));
-        return;
+        if (res.body) res.body.cancel().catch(() => {});
+        return false;
       }
     }
-    await browserSpeak(text, () => mouth(true));
+    if (res && res.status === 200) await playVoice(res, mine, begin);
+    else await browserSpeak(text, begin);
   } catch (err) {
     console.warn('speak failed', err);
-  } finally {
-    mouth(false);
   }
+  if (!mine()) return false;
+  if (!begun) {
+    begun = true;
+    onStart();
+  }
+  look.speaking = false;
+  look.thinking = false;
+  pose();
+  return true;
 }
+
+// Restart a one-off CSS animation.
+function replay(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+
+// What the pet is doing, floating above it for `ms`; null hides it.
+function petCaption(text, ms = 8000) {
+  const c = $('petSay');
+  clearTimeout(petCaption.timer);
+  if (!text) {
+    c.hidden = true;
+    return;
+  }
+  c.textContent = text;
+  c.hidden = false;
+  petCaption.timer = setTimeout(() => (c.hidden = true), ms);
+}
+
+// ---- the speech bubble ------------------------------------------------------------
+// An oval of frosted glass beside the speaking girl's mouth, its tail pointing at
+// her mouth. Where her mouth and face are in each 720×960 picture:
+const FACES = {
+  a: { mouth: [0.5, 0.43], face: [0.28, 0.18, 0.72, 0.5] },
+  b: { mouth: [0.435, 0.435], face: [0.26, 0.2, 0.7, 0.5] },
+  c: { mouth: [0.53, 0.495], face: [0.27, 0.25, 0.76, 0.57] },
+  d: { mouth: [0.545, 0.43], face: [0.3, 0.18, 0.78, 0.5] },
+};
+const PET_HEAD = [0.2, 0.22, 0.8, 0.62];
+const bubble = { mode: null, text: '' };
+
+// Where a point of a 720×960 picture lands on screen inside its figure, which shows
+// it with object-fit: cover at object-position 50% 15%.
+function picturePoint(fig, fx, fy) {
+  const r = fig.getBoundingClientRect();
+  const scale = Math.max(r.width / 720, r.height / 960);
+  const w = 720 * scale;
+  const h = 960 * scale;
+  return [r.left + (r.width - w) * 0.5 + fx * w, r.top + (r.height - h) * 0.15 + fy * h];
+}
+function pictureBox(fig, [x0, y0, x1, y1]) {
+  const [l, t] = picturePoint(fig, x0, y0);
+  const [r, b] = picturePoint(fig, x1, y1);
+  return { l, t, r, b };
+}
+const area = (a) => Math.max(0, a.r - a.l) * Math.max(0, a.b - a.t);
+const overlap = (a, b) => area({ l: Math.max(a.l, b.l), t: Math.max(a.t, b.t), r: Math.min(a.r, b.r), b: Math.min(a.b, b.b) });
+
+function showThinking() {
+  bubble.mode = 'think';
+  placeBubble();
+}
+function showWords(text) {
+  bubble.mode = 'say';
+  bubble.text = text;
+  $('say').textContent = text;
+  placeBubble();
+  replay($('bubble'), 'pop');
+}
+
+// Tries the bubble to the right of her face, to the left, and under her chin, at a
+// few heights, and keeps the one that is close to her mouth without covering her
+// face, the pet's face, or anything outside the stage.
+function placeBubble() {
+  const el = $('bubble');
+  if (!bubble.mode || !state || $('app').hidden) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.classList.toggle('think', bubble.mode === 'think');
+  const app = $('app').getBoundingClientRect();
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const pad = getComputedStyle($('app'));
+  const bar = $('app').querySelector('.bar').getBoundingClientRect();
+  const girlFig = $('girlFig');
+  const wide = matchMedia('(orientation: landscape) and (min-width: 600px)').matches;
+  const region = {
+    l: app.left + parseFloat(pad.paddingLeft),
+    t: bar.bottom + rem * 0.5,
+    r: wide ? $('app').querySelector('.side').getBoundingClientRect().left - rem * 0.6 : app.right - parseFloat(pad.paddingRight),
+    b: wide ? app.bottom - parseFloat(pad.paddingBottom) : girlFig.getBoundingClientRect().bottom + rem * 0.5,
+  };
+  const f = FACES[state.profile.girl] || FACES.b;
+  const [mx, my] = picturePoint(girlFig, ...f.mouth);
+  const face = pictureBox(girlFig, f.face);
+  const petHead = pictureBox($('petFig'), PET_HEAD);
+  const g = girlFig.getBoundingClientRect();
+  const body = { l: g.left, t: g.top, r: g.right, b: g.bottom };
+  const gap = rem * 0.9;
+
+  // The words' natural block at a given width, and the oval around it.
+  const p = $('say');
+  const measure = (maxW) => {
+    if (bubble.mode === 'think') return { tw: rem * 3.2, th: rem * 1.1 };
+    p.style.width = '';
+    p.style.maxWidth = `${Math.max(rem * 4, maxW)}px`;
+    return { tw: p.offsetWidth, th: p.offsetHeight };
+  };
+  // About as many characters per line as there are lines, a little wider: a round shape.
+  const n = bubble.mode === 'think' ? 0 : [...bubble.text].length;
+  const em = parseFloat(getComputedStyle(p).fontSize) * 1.02;
+  const ideal = Math.min(16, Math.max(6, Math.round(Math.sqrt(3.3 * n)))) * em;
+  const least = bubble.mode === 'think' ? rem * 3.2 : Math.min(n, 7) * em; // narrower reads badly
+  const oval = (maxBoxW) => {
+    const room = (maxBoxW - rem * 1.2) / Math.SQRT2;
+    if (room < least) return null;
+    const { tw, th } = measure(Math.min(ideal, room));
+    return { tw, th, w: tw * Math.SQRT2 + rem * 1.2, h: th * Math.SQRT2 + rem * 1.0 };
+  };
+
+  const tries = [];
+  const add = (side, maxW, place) => {
+    const sz = oval(maxW);
+    if (sz) for (const box of place(sz)) tries.push({ side, box, sizes: sz });
+  };
+  const ys = (sz) => [my - sz.h * 0.62, my - sz.h * 0.35, region.t];
+  add('right', region.r - face.r - gap, (sz) => ys(sz).map((t) => ({ l: face.r + gap, t, r: face.r + gap + sz.w, b: t + sz.h })));
+  add('left', face.l - gap - region.l, (sz) => ys(sz).map((t) => ({ l: face.l - gap - sz.w, t, r: face.l - gap, b: t + sz.h })));
+  const chin = Math.max(face.b, my + rem) + gap * 0.6;
+  const below = (sz) => [mx - sz.w / 2, region.l, region.r - sz.w].map((l) => ({ l, t: chin, r: l + sz.w, b: chin + sz.h }));
+  add('below', region.r - region.l, below);
+  // Under her chin but narrower, so it stops short of the pet's head.
+  if (petHead.l > region.l) add('below', petHead.l - gap - region.l, (sz) => [{ l: region.l, t: chin, r: region.l + sz.w, b: chin + sz.h }]);
+
+  let best = null;
+  for (const c of tries) {
+    // Slide into the stage where it can, then score what is still wrong. Under her
+    // chin it may hang down past the stage rather than slide up over her face.
+    const b = { ...c.box };
+    const dx = b.l < region.l ? region.l - b.l : b.r > region.r ? region.r - b.r : 0;
+    const dy = b.t < region.t ? region.t - b.t : b.b > region.b && c.side !== 'below' ? region.b - b.b : 0;
+    b.l += dx; b.r += dx; b.t += dy; b.b += dy;
+    const out = area(b) - overlap(b, region);
+    const faceHit = overlap(b, face) / area(face);
+    const petHit = overlap(b, petHead) / Math.max(1, area(petHead));
+    const nx = Math.max(b.l, Math.min(mx, b.r));
+    const ny = Math.max(b.t, Math.min(my, b.b));
+    const reach = (Math.hypot(nx - mx, ny - my) / (face.r - face.l)) * 6; // in face widths, so any screen size weighs the same
+    const bodyHit = overlap(b, body) / area(b); // rather empty space than over her clothes
+    const score = (out / area(b)) * 40 + faceHit * 60 + petHit * 25 + bodyHit * 12 + reach;
+    c.score = score;
+    if (!best || score < best.score) best = { ...c, box: b, score };
+  }
+  bubble.tries = tries; // for checking placements
+  if (!best) return;
+
+  const { box, sizes } = best;
+  el.style.left = `${box.l - app.left}px`;
+  el.style.top = `${box.t - app.top}px`;
+  el.style.width = `${box.r - box.l}px`;
+  el.style.height = `${box.b - box.t}px`;
+  if (bubble.mode === 'say') {
+    p.style.maxWidth = 'none';
+    p.style.width = `${sizes.tw + 1}px`;
+  }
+
+  // The oval and its tail as one shape, so the glass never doubles up where they meet.
+  const w = box.r - box.l;
+  const h = box.b - box.t;
+  const rx = w / 2;
+  const ry = h / 2;
+  const lx = mx - box.l;
+  const ly = my - box.t;
+  const t0 = Math.atan2((ly - ry) / ry, (lx - rx) / rx);
+  const at = (t) => [rx + rx * Math.cos(t), ry + ry * Math.sin(t)];
+  const [ex, ey] = at(t0);
+  const dist = Math.hypot(lx - ex, ly - ey);
+  const len = Math.max(0, Math.min(dist - rem * 0.5, rem * 2.2));
+  const ux = (lx - ex) / (dist || 1);
+  const uy = (ly - ey) / (dist || 1);
+  const svg = el.querySelector('svg');
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  const f2 = (v) => v.toFixed(1);
+  let d;
+  if (bubble.mode === 'think' || len < rem * 0.3) {
+    // Thinking: little round puffs drift from her mouth to the bubble.
+    d = `M${f2(0)} ${f2(ry)}A${f2(rx)} ${f2(ry)} 0 1 1 ${f2(2 * rx)} ${f2(ry)}A${f2(rx)} ${f2(ry)} 0 1 1 0 ${f2(ry)}Z`;
+    if (bubble.mode === 'think' && len > rem * 0.6) {
+      for (const [k, r] of [[0.35, 0.34], [0.8, 0.22]]) {
+        const cx = ex + ux * len * k;
+        const cy = ey + uy * len * k;
+        d += `M${f2(cx - r * rem)} ${f2(cy)}a${f2(r * rem)} ${f2(r * rem)} 0 1 0 ${f2(2 * r * rem)} 0a${f2(r * rem)} ${f2(r * rem)} 0 1 0 ${f2(-2 * r * rem)} 0Z`;
+      }
+    }
+  } else {
+    const half = Math.min(0.3, Math.max(0.08, (rem * 0.6) / Math.sqrt(rx * ry)));
+    const [ax, ay] = at(t0 - half);
+    const [bx, by] = at(t0 + half);
+    const tx = ex + ux * len;
+    const ty = ey + uy * len;
+    d = `M${f2(ax)} ${f2(ay)}L${f2(tx)} ${f2(ty)}L${f2(bx)} ${f2(by)}A${f2(rx)} ${f2(ry)} 0 1 1 ${f2(ax)} ${f2(ay)}Z`;
+  }
+  svg.querySelector('path').setAttribute('d', d);
+  el.style.transformOrigin = `${f2(lx)}px ${f2(ly)}px`;
+}
+addEventListener('resize', () => requestAnimationFrame(placeBubble));
 
 // Replies arrive seconds after the last tap, and phone browsers (Huawei's among them)
 // often refuse to start an <audio> element by then. So sound goes through one Web Audio
@@ -483,8 +705,8 @@ class VoicePlayer {
     }
     const ctx = this.ctx;
     if (!this.started) {
-      // Wait for a quarter second of sound (or the whole line, if shorter) before starting.
-      if (this.heldFrames < ctx.sampleRate * 0.25 && !last) return;
+      // Wait for an eighth of a second of sound (or the whole line, if shorter) before starting.
+      if (this.heldFrames < ctx.sampleRate * 0.12 && !last) return;
       if (!this.heldFrames) return;
       this.started = true;
       this.at = ctx.currentTime + 0.05;
@@ -598,6 +820,7 @@ function browserSpeak(text, onStart) {
 function stopSpeaking() {
   speakSeq += 1; // whatever line was in progress is no longer ours
   look.speaking = false;
+  look.feel = null;
   if (currentAudio) {
     currentAudio.stop();
     currentAudio = null;
@@ -635,13 +858,10 @@ async function send(text) {
     const r = await api('/api/chat', { text });
     if (r.state) render(r.state);
     setBusy(false);
-    await say(r.reply, r.petAction);
+    await say(r.reply, { pet: r.petAction });
   } catch (err) {
     setBusy(false);
-    if (err.message !== 'locked') {
-      mood('worried');
-      await say('哎呀，网络有点慢，我们再试一次好吗？');
-    }
+    if (err.message !== 'locked') await say('哎呀，网络有点慢，我们再试一次好吗？', { mood: 'worried' });
   }
 }
 
@@ -654,6 +874,7 @@ function setBusy(on, label) {
   if (on) {
     look.thinking = true;
     pose();
+    showThinking();
   }
 }
 
@@ -667,8 +888,7 @@ async function startListening() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
   } catch {
     $('typeForm').hidden = false;
-    mood('worried');
-    await say('我听不到声音，麦克风好像没打开。先打字跟我说吧。');
+    await say('我听不到声音，麦克风好像没打开。先打字跟我说吧。', { mood: 'worried' });
     return;
   }
   const src = audioCtx.createMediaStreamSource(stream);
@@ -689,11 +909,12 @@ async function startListening() {
     } else if (r.heard) {
       r.silentMs += (d.length / r.rate) * 1000;
     }
-    if ((r.heard && r.silentMs > 1000) || Date.now() - r.t0 > 15000) stopListening();
+    if ((r.heard && r.silentMs > 800) || Date.now() - r.t0 > 15000) stopListening();
   };
   src.connect(proc);
   proc.connect(audioCtx.destination);
   rec = r;
+  $('bubble').classList.add('dim');
   const mic = $('mic');
   mic.classList.add('listening');
   mic.textContent = '说完点我';
@@ -703,6 +924,7 @@ async function stopListening() {
   const r = rec;
   if (!r) return;
   rec = null;
+  $('bubble').classList.remove('dim');
   r.proc.disconnect();
   r.src.disconnect();
   r.stream.getTracks().forEach((t) => t.stop());
@@ -720,16 +942,10 @@ async function stopListening() {
     const { text } = await api('/api/asr', { wav });
     setBusy(false);
     if (text) await send(text);
-    else {
-      mood('worried');
-      await say('我没听清楚，可以再说一遍吗？');
-    }
+    else await say('我没听清楚，可以再说一遍吗？', { mood: 'worried' });
   } catch (err) {
     setBusy(false);
-    if (err.message !== 'locked') {
-      mood('worried');
-      await say('我没听清楚，可以再说一遍吗？');
-    }
+    if (err.message !== 'locked') await say('我没听清楚，可以再说一遍吗？', { mood: 'worried' });
   }
 }
 
@@ -774,6 +990,52 @@ function encodeWav16k(bufs, total, srcRate) {
   return btoa(bin);
 }
 
+// ---- taps on the characters --------------------------------------------------------
+// A tap on her gets a little bounce and a smile; now and then, when she isn't busy,
+// a few words too. A tap on the pet makes it hop and chirp.
+
+const POKE_LINES = ['嘻嘻，好痒呀！', '我在呢～想跟我说什么？', '嘿嘿，被你发现啦！', '再戳我，我就要笑出来啦！', '你戳我一下，我也戳你一下！'];
+let lastPokeLine = 0;
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+$('girlFig').addEventListener('click', () => {
+  if (!started || !state) return;
+  replay($('girlFig'), 'poked');
+  if (look.speaking || look.thinking || busy || rec) return; // busy: the bounce is enough
+  if (Date.now() - lastPokeLine > 8000) {
+    lastPokeLine = Date.now();
+    say(pick(POKE_LINES), { mood: pick(['happy', 'cheer']) });
+  } else mood(pick(['happy', 'cheer']), 1400);
+});
+
+$('petFig').addEventListener('click', () => {
+  if (!started || !state) return;
+  const p = state.pets[state.profile.pet];
+  replay($('petFig'), 'react');
+  petMood('happy', 1800);
+  if (p) petCaption(`${p.sound} ${p.name}${pick(p.moves)}`, 2600);
+  if (!look.speaking && !rec) chirp();
+});
+
+// Two quick rising notes, quiet.
+function chirp() {
+  if (!audioCtx || audioCtx.state !== 'running') return;
+  const t0 = audioCtx.currentTime + 0.01;
+  [0, 0.13].forEach((dt, i) => {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(i ? 760 : 620, t0 + dt);
+    o.frequency.exponentialRampToValueAtTime(i ? 1500 : 1180, t0 + dt + 0.1);
+    g.gain.setValueAtTime(0.0001, t0 + dt);
+    g.gain.exponentialRampToValueAtTime(0.12, t0 + dt + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.12);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t0 + dt);
+    o.stop(t0 + dt + 0.13);
+  });
+}
+
 // ---- tasks, picker -----------------------------------------------------------
 
 let pending = null;
@@ -796,11 +1058,9 @@ $('confirmYes').addEventListener('click', async () => {
     const r = await api(`/api/tasks/${t.id}/done`, {});
     render(r.state);
     const p = state.pets[state.profile.pet];
-    mood('happy');
-    await say(`记下啦！等妈妈看过，好感度就会涨。`, p ? `${p.name}${p.moves[0]}` : null);
+    await say(`记下啦！等妈妈看过，好感度就会涨。`, { mood: 'happy', pet: p ? `${p.name}${p.moves[0]}` : null });
   } catch (err) {
-    mood('worried');
-    await say('哎呀，没记上，再点一次试试？');
+    await say('哎呀，没记上，再点一次试试？', { mood: 'worried' });
   }
 });
 $('confirmNo').addEventListener('click', () => {
@@ -833,16 +1093,13 @@ async function choose(kind, key) {
     const r = await api('/api/profile', kind === 'girl' ? { girl: key } : { pet: key });
     render(r.state);
     openPicker();
-    if (kind === 'girl') {
-      mood('happy');
-      say(`我是${state.girls[key].name}，以后我陪着你！`);
-    } else {
+    if (kind === 'girl') say(`我是${state.girls[key].name}，以后我陪着你！`, { mood: 'happy' });
+    else {
       const p = state.pets[key];
-      say(`${p.name}来啦！`, `${p.name}${p.moves[0]}`);
+      say(`${p.name}来啦！`, { pet: `${p.name}${p.moves[0]}` });
     }
   } catch (err) {
-    mood('worried');
-    say('换不了这个伙伴，问问妈妈吧。');
+    say('换不了这个伙伴，问问妈妈吧。', { mood: 'worried' });
   }
 }
 
@@ -865,7 +1122,7 @@ function connectEvents() {
     if (ev.type === 'alarm') await chime();
     if (ev.line) {
       const p = state && state.pets[state.profile.pet];
-      await say(ev.line, p ? `${p.name}${p.moves[1] || p.moves[0]}` : null);
+      await say(ev.line, { pet: p ? `${p.name}${p.moves[1] || p.moves[0]}` : null });
     }
     load();
   };
@@ -880,11 +1137,9 @@ async function reviewed(ev) {
   }
   const p = state && state.pets[state.profile.pet];
   if (ev.approve) {
-    mood('cheer', 3000);
-    await say(`妈妈看过「${ev.title}」啦，说你做得真棒！${ev.points ? `好感度加 ${ev.points}。` : ''}`, p ? `${p.name}${p.moves[0]}` : null);
+    await say(`妈妈看过「${ev.title}」啦，说你做得真棒！${ev.points ? `好感度加 ${ev.points}。` : ''}`, { mood: 'cheer', pet: p ? `${p.name}${p.moves[0]}` : null });
   } else {
-    mood('happy');
-    await say(`妈妈说「${ev.title}」还要再做一下。没关系，我陪着你，加油！`);
+    await say(`妈妈说「${ev.title}」还要再做一下。没关系，我陪着你，加油！`, { mood: 'happy' });
   }
 }
 
@@ -917,8 +1172,7 @@ $('startBtn').addEventListener('click', async () => {
   }).catch(() => {});
   if (state) render(state); // someone is watching now, so a new pet stage can be announced
   const kid = state ? state.profile.kidName : '';
-  mood('happy', 2000);
-  say(`${kid}，我在这儿呢！想问什么就按一下说话。`);
+  say(`${kid}，我在这儿呢！想问什么就按一下说话。`, { mood: 'happy' });
 });
 
 document.addEventListener('visibilitychange', () => {

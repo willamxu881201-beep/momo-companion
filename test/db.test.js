@@ -63,15 +63,12 @@ test('task status flow and affinity ledger', () => {
   assert.ok(!s.hasAffinity('2026-10-28', 'task', '999'));
 });
 
-test('alarms, pairing codes and usage', () => {
+test('alarms and usage', () => {
   const s = openDb(':memory:');
   s.addAlarm('2026-10-29', '07:00', '起床');
   assert.equal(s.pendingAlarms().length, 1);
   assert.equal(s.cancelAlarms(), 1);
   assert.equal(s.pendingAlarms().length, 0);
-  s.addPairingCode('h1', Date.now() + 60000);
-  assert.equal(s.takePairingCode('h1'), true);
-  assert.equal(s.takePairingCode('h1'), false);
   s.addUsage('2026-10-28', 'chat');
   s.addUsage('2026-10-28', 'chat', 2);
   assert.equal(s.usage('2026-10-28', 'chat'), 3);

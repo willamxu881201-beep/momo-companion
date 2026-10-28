@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../server/db.js';
 import { Family } from '../server/family.js';
-import { Auth, DEVICE_COOKIE, PARENT_COOKIE } from '../server/auth.js';
+import { Auth, KID_COOKIE, PARENT_COOKIE } from '../server/auth.js';
 import { createHandler } from '../server/http.js';
 
 const webDir = mkdtempSync(join(tmpdir(), 'momo-web-'));
@@ -84,9 +84,41 @@ test('pages carry the CSP; paths outside web/ are not served', async () => {
   assert.equal(status, 404);
 });
 
+// Open the kid link the way a browser would and keep the cookie it sets.
+async function openKidLink(key) {
+  const res = await fetch(`${base}/?k=${encodeURIComponent(key)}`, { redirect: 'manual' });
+  await res.arrayBuffer();
+  const set = res.headers.get('set-cookie') || '';
+  return { status: res.status, location: res.headers.get('location'), cookie: set.split(';')[0] };
+}
+
+test('the kid link opens the page on any device; a new link retires the old one', async () => {
+  const first = await openKidLink(auth.kidKey());
+  assert.equal(first.status, 302);
+  assert.equal(first.location, '/');
+  assert.match(first.cookie, new RegExp(`^${KID_COOKIE}=`));
+  const second = await openKidLink(auth.kidKey()); // another tablet, same link
+  assert.equal(second.cookie, first.cookie);
+  assert.equal((await get('/api/state', { Cookie: first.cookie })).status, 200);
+
+  const wrong = await openKidLink('not-the-key');
+  assert.equal(wrong.status, 302);
+  assert.equal(wrong.cookie, '');
+  const none = await get('/api/state');
+  assert.equal(none.status, 401);
+  await none.arrayBuffer();
+
+  auth.rotateKidKey();
+  const old = await get('/api/state', { Cookie: first.cookie });
+  assert.equal(old.status, 401);
+  await old.arrayBuffer();
+  const fresh = await openKidLink(auth.kidKey());
+  assert.equal((await get('/api/state', { Cookie: fresh.cookie })).status, 200);
+});
+
 test('the tablet is told when it is quiet time', async () => {
-  const { token } = auth.pair(auth.createPairingCode(), 'test tablet');
-  const headers = { Cookie: `${DEVICE_COOKIE}=${token}` };
+  const { cookie: kid } = await openKidLink(auth.kidKey());
+  const headers = { Cookie: kid };
   at = new Date('2026-10-28T08:05:00Z'); // 16:05
   assert.equal((await (await get('/api/state', headers)).json()).quiet, false);
   at = new Date('2026-10-28T14:00:00Z'); // 22:00, after the default 21:30

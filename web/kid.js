@@ -20,8 +20,8 @@ async function api(path, body) {
     body: JSON.stringify(body),
   });
   if (res.status === 401) {
-    showUnpaired();
-    throw new Error('unpaired');
+    showLocked();
+    throw new Error('locked');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || '出错了');
@@ -33,12 +33,12 @@ async function load() {
     render(await api('/api/state'));
     if (evolved && !look.speaking) say('');
   } catch (err) {
-    if (err.message !== 'unpaired') console.warn(err);
+    if (err.message !== 'locked') console.warn(err);
   }
 }
 
-function showUnpaired() {
-  $('unpaired').hidden = false;
+function showLocked() {
+  $('locked').hidden = false;
   $('start').hidden = true;
   $('app').hidden = true;
 }
@@ -50,6 +50,15 @@ function showUnpaired() {
 // iOS Low Power Mode, slow Wi-Fi.
 
 const STILL_ONLY = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// The colour each loop was painted on, where its edge fades out (sampled from the videos).
+// The page background is a gradient between the girl's and the pet's, so both melt into it.
+const GIRL_BG = { a: '#ead2ce', b: '#94b8c7', c: '#c8a782', d: '#9fa3db' };
+const PET_BG = {
+  '1_1': '#f3e1c9', '1_2': '#ecdbc9', '1_3': '#ead7c5', '1_4': '#e3d4c5',
+  '2_1': '#dfbd84', '2_2': '#dcb987', '2_3': '#d3c0a1', '2_4': '#d7c3a1',
+  '3_1': '#e3c0cb', '3_2': '#e2b9cc', '3_3': '#dbb9ca', '3_4': '#debed0',
+  '4_1': '#a2c3d1', '4_2': '#9ebfcf', '4_3': '#a3c4d5', '4_4': '#99bcc7',
+};
 const EXPRESSIONS = ['happy', 'talk', 'think', 'sleepy', 'cheer', 'worried'];
 
 class Figure {
@@ -197,6 +206,10 @@ function render(s) {
   const p = s.profile.pet;
   const stage = s.affinity.stage;
   document.body.dataset.girl = g;
+  document.body.style.setProperty('--gc', GIRL_BG[g] || GIRL_BG.b);
+  document.body.style.setProperty('--pc', PET_BG[`${p}_${stage}`] || GIRL_BG[g] || GIRL_BG.b);
+  document.body.classList.toggle('quiet-time', Boolean(s.quiet));
+  document.querySelector('meta[name="theme-color"]').content = GIRL_BG[g] || GIRL_BG.b;
   girl.set(`/img/girl_${g}.jpg`, { idle: `/vid/girl_${g}_idle.mp4`, talk: `/vid/girl_${g}_talk.mp4` },
     EXPRESSIONS.map((n) => `/img/expr/${g}_${n}.jpg`));
   pet.set(`/img/pet/${p}_${stage}.jpg`, { idle: `/vid/pet_${p}_${stage}.mp4` },
@@ -254,7 +267,7 @@ function render(s) {
   pose();
 
   if (!started) {
-    $('unpaired').hidden = true;
+    $('locked').hidden = true;
     $('start').hidden = false;
   }
 }
@@ -422,7 +435,7 @@ async function send(text) {
     await say(r.reply, r.petAction);
   } catch (err) {
     setBusy(false);
-    if (err.message !== 'unpaired') {
+    if (err.message !== 'locked') {
       mood('worried');
       await say('哎呀，网络有点慢，我们再试一次好吗？');
     }
@@ -504,7 +517,7 @@ async function stopListening() {
     }
   } catch (err) {
     setBusy(false);
-    if (err.message !== 'unpaired') {
+    if (err.message !== 'locked') {
       mood('worried');
       await say('我没听清楚，可以再说一遍吗？');
     }

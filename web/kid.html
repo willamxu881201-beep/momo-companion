@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#E7F2F7">
+<meta name="theme-color" content="#94b8c7">
 <title>MoMo 的伙伴</title>
 <link rel="stylesheet" href="/kid.css">
 <script src="/kid.js" defer></script>
 </head>
 <body data-girl="b">
 
-<div id="unpaired" class="cover" hidden>
-  <div class="cover-card">
-    <h1>这台平板还没配对</h1>
-    <p>请妈妈打开家长后台，点「配对平板」，再用这台平板打开生成的链接。</p>
+<div id="locked" class="cover" hidden>
+  <div class="cover-card glass">
+    <h1>这个链接打不开了</h1>
+    <p>可能是妈妈换了新链接。请妈妈在家长后台的「平板」页复制最新的链接，再打开一次。</p>
   </div>
 </div>
 
@@ -25,58 +25,59 @@
 </div>
 
 <main id="app" hidden>
+  <figure class="girl" id="girlFig">
+    <div class="frame">
+      <img class="base" id="girlImg" alt="">
+      <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
+      <video class="loop" data-loop="talk" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
+      <img class="expr" alt="" aria-hidden="true">
+    </div>
+  </figure>
+  <figure class="pet" id="petFig">
+    <div class="frame">
+      <img class="base" id="petImg" alt="">
+      <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
+      <img class="expr" alt="" aria-hidden="true">
+    </div>
+    <figcaption id="petSay" class="glass" hidden></figcaption>
+  </figure>
+  <div class="night" aria-hidden="true"></div>
+
   <header class="bar">
-    <div class="when"><b id="date"></b><span id="dlabel" class="tag"></span></div>
-    <div id="next" class="next"></div>
-    <div id="alarm" class="tag alarm" hidden></div>
-    <button id="swap" class="ghost" type="button">换伙伴</button>
+    <div class="when"><b id="date" class="glass"></b><span id="dlabel" class="tag"></span></div>
+    <div id="next" class="next glass"></div>
+    <div id="alarm" class="tag alarm glass" hidden></div>
+    <button id="swap" class="ghost glass" type="button">换伙伴</button>
   </header>
 
-  <section class="stage" aria-label="伙伴">
-    <div id="bubble" class="bubble" aria-live="polite">
-      <b id="who"></b>
-      <p id="say"></p>
-      <small id="heard" hidden></small>
-    </div>
-    <figure class="girl" id="girlFig">
-      <div class="frame">
-        <img class="base" id="girlImg" alt="">
-        <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
-        <video class="loop" data-loop="talk" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
-        <img class="expr" alt="" aria-hidden="true">
-      </div>
-    </figure>
-    <figure class="pet" id="petFig">
-      <div class="frame">
-        <img class="base" id="petImg" alt="">
-        <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
-        <img class="expr" alt="" aria-hidden="true">
-      </div>
-      <figcaption id="petSay" hidden></figcaption>
-    </figure>
+  <section id="bubble" class="bubble glass" aria-live="polite">
+    <b id="who"></b>
+    <p id="say"></p>
+    <small id="heard" hidden></small>
   </section>
 
-  <section class="dock">
-    <div class="talk">
-      <button id="mic" class="mic" type="button">按一下说话</button>
-      <button id="kbd" class="ghost round" type="button">打字</button>
-    </div>
-    <form id="typeForm" class="type" hidden>
-      <input id="typeText" maxlength="100" placeholder="打字也可以" autocomplete="off">
-      <button type="submit">发送</button>
-    </form>
-
-    <div class="panel">
+  <aside class="side">
+    <div class="panel glass">
       <h2>今天要做的事</h2>
       <ul id="tasks" class="tasks"></ul>
     </div>
-
-    <div class="panel love">
+    <div class="panel glass love">
       <div class="love-row"><b id="petName"></b><span id="stageName" class="tag"></span></div>
       <div class="meter"><i id="meterFill"></i></div>
       <span id="loveText" class="love-text"></span>
     </div>
-  </section>
+  </aside>
+
+  <div class="dock">
+    <form id="typeForm" class="type glass" hidden>
+      <input id="typeText" maxlength="100" placeholder="打字也可以" autocomplete="off">
+      <button type="submit">发送</button>
+    </form>
+    <div class="talk">
+      <button id="mic" class="mic" type="button">按一下说话</button>
+      <button id="kbd" class="ghost glass round" type="button">打字</button>
+    </div>
+  </div>
 </main>
 
 <div id="picker" class="sheet" hidden>

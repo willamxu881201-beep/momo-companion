@@ -1,24 +1,26 @@
 // Two kinds of access:
 //  - Mom: password login → session cookie (30 days).
-//  - The tablet: paired once from a short-lived link Mom creates → device
-//    cookie (400 days). Only hashes of tokens are stored.
+//  - The kid page: one shared link with a random key, usable on any device.
+//    Opening it sets a cookie so the key leaves the address bar. Mom can change
+//    the key in the console, which cuts off every device on the old link.
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const PARENT_COOKIE = 'momo_parent';
-export const DEVICE_COOKIE = 'momo_device';
+export const KID_COOKIE = 'momo_kid';
 const PARENT_TTL_MS = 30 * 86400000;
-const DEVICE_TTL_S = 400 * 86400;
-const PAIR_TTL_MS = 15 * 60000;
+export const KID_TTL_S = 400 * 86400;
 
 export const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');
 export const newToken = () => randomBytes(32).toString('base64url');
 
+function sameHash(a, b) {
+  return timingSafeEqual(Buffer.from(sha256(a), 'hex'), Buffer.from(sha256(b), 'hex'));
+}
+
 export function passwordMatches(given, expected) {
   if (!expected) return false;
-  const a = Buffer.from(sha256(given), 'hex');
-  const b = Buffer.from(sha256(expected), 'hex');
-  return timingSafeEqual(a, b);
+  return sameHash(given, expected);
 }
 
 export function parseCookies(header = '') {
@@ -78,21 +80,30 @@ export class Auth {
     if (t) this.store.removeParentSession(sha256(t));
   }
 
-  createPairingCode() {
-    const code = randomBytes(9).toString('base64url');
-    this.store.addPairingCode(sha256(code), Date.now() + PAIR_TTL_MS);
-    return code;
+  // ---- the kid link ----------------------------------------------------------
+
+  kidKey() {
+    const { key } = this.store.getSetting('kidLink');
+    return key || this.rotateKidKey();
   }
 
-  pair(code, name) {
-    if (!code || !this.store.takePairingCode(sha256(code))) return { ok: false, reason: '配对链接无效或已过期，请让妈妈重新生成' };
-    const token = newToken();
-    this.store.addDevice(String(name || '平板').slice(0, 20), sha256(token));
-    return { ok: true, token, maxAge: DEVICE_TTL_S };
+  rotateKidKey() {
+    const key = randomBytes(12).toString('base64url');
+    this.store.setSetting('kidLink', { key });
+    return key;
   }
 
-  device(cookies) {
-    const t = cookies[DEVICE_COOKIE];
-    return t ? this.store.findDevice(sha256(t)) : null;
+  keyMatches(given) {
+    return Boolean(given) && sameHash(given, this.kidKey());
+  }
+
+  // The cookie carries a hash of the key, so a new key retires every old cookie.
+  kidCookieValue() {
+    return sha256(`kid:${this.kidKey()}`);
+  }
+
+  isKid(cookies) {
+    const t = cookies[KID_COOKIE];
+    return Boolean(t) && sameHash(t, this.kidCookieValue());
   }
 }

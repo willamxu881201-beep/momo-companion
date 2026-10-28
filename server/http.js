@@ -6,7 +6,7 @@ import { stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { pipeline } from 'node:stream';
 import { addDays, dateZh, isDate, timeToMinutes } from './dates.js';
-import { DEVICE_COOKIE, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
+import { KID_COOKIE, KID_TTL_S, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
 import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
 import { inQuiet } from './events.js';
 import { synthesize, transcribe, wavRms, wavSeconds } from './speech.js';
@@ -24,7 +24,7 @@ const TYPES = {
   '.mp4': 'video/mp4',
   '.ico': 'image/x-icon',
 };
-const PAGES = { '/': 'kid.html', '/parent': 'parent.html', '/pair': 'pair.html' };
+const PAGES = { '/': 'kid.html', '/parent': 'parent.html' };
 const CSP =
   "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; " +
   "style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
@@ -45,13 +45,6 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
 
   on('GET', '/healthz', null, () => ({ ok: true }));
 
-  on('POST', '/api/pair', null, (ctx) => {
-    const r = auth.pair(ctx.body.code, ctx.body.name);
-    if (!r.ok) throw new HttpError(400, r.reason);
-    ctx.setCookie(cookie(DEVICE_COOKIE, r.token, { maxAge: r.maxAge, secure: ctx.secure }));
-    return { ok: true };
-  });
-
   on('POST', '/api/parent/login', null, (ctx) => {
     if (!config.parentPassword) throw new HttpError(503, '服务器还没设置家长密码（PARENT_PASSWORD）');
     const r = auth.login(ctx.ip, String(ctx.body.password || ''));
@@ -60,27 +53,26 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     return { ok: true };
   });
 
-  // ---- the tablet (a paired device; Mom's session works too) ---------------
+  // ---- the kid page (anyone with the kid link; Mom's session works too) ------
 
-  on('GET', '/api/state', 'device', () => kidState());
+  on('GET', '/api/state', 'kid', () => kidState());
 
-  on('GET', '/api/events', 'device', (ctx) => {
+  on('GET', '/api/events', 'kid', (ctx) => {
     hub.attach(ctx.req, ctx.res);
     return undefined; // response stays open
   });
 
-  on('POST', '/api/chat', 'device', async (ctx) => {
+  on('POST', '/api/chat', 'kid', async (ctx) => {
     const today = family.now().date;
     if (store.usage(today, 'chat') >= config.limits.chatPerDay) {
       return { reply: '今天我们聊了好多啦，我的嗓子要休息一下，明天再陪你聊好不好？', petAction: null, actions: [], limited: true };
     }
     store.addUsage(today, 'chat');
-    const key = ctx.device ? `d${ctx.device.id}` : 'parent';
-    const r = await brain.reply(key, ctx.body.text);
+    const r = await brain.reply(ctx.kid ? 'kid' : 'parent', ctx.body.text);
     return { ...r, state: kidState() };
   });
 
-  on('POST', '/api/asr', 'device', async (ctx) => {
+  on('POST', '/api/asr', 'kid', async (ctx) => {
     const wav = Buffer.from(String(ctx.body.wav || ''), 'base64');
     const seconds = wavSeconds(wav);
     if (seconds < 0.3) return { text: '', reason: 'short' };
@@ -93,7 +85,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     return { text };
   });
 
-  on('POST', '/api/tts', 'device', async (ctx) => {
+  on('POST', '/api/tts', 'kid', async (ctx) => {
     const text = String(ctx.body.text || '').slice(0, 300);
     if (!text || !config.ttsAppId) return { status: 204 };
     const { girlInfo } = family.profile();
@@ -112,13 +104,13 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     return { status: 200, type: 'audio/mpeg', body: audio };
   });
 
-  on('POST', '/api/tasks/:id/done', 'device', (ctx) => {
+  on('POST', '/api/tasks/:id/done', 'kid', (ctx) => {
     const r = family.markDone(Number(ctx.params.id));
     if (!r.ok) throw new HttpError(400, r.reason);
     return { ok: true, state: kidState() };
   });
 
-  on('POST', '/api/profile', 'device', (ctx) => {
+  on('POST', '/api/profile', 'kid', (ctx) => {
     const hidden = store.getSetting('hidden');
     const p = store.getSetting('profile');
     const { girl, pet } = ctx.body;
@@ -131,7 +123,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
       p.pet = String(pet);
     }
     store.setSetting('profile', p);
-    brain.forget(ctx.device ? `d${ctx.device.id}` : 'parent');
+    brain.forget(ctx.kid ? 'kid' : 'parent');
     return { ok: true, state: kidState() };
   });
 
@@ -242,14 +234,9 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     return parentState();
   });
 
-  on('POST', '/api/parent/pair', 'parent', (ctx) => {
-    const code = auth.createPairingCode();
-    const base = config.publicUrl || `${ctx.secure ? 'https' : 'http'}://${ctx.req.headers.host}`;
-    return { url: `${base}/pair#${code}`, minutes: 15 };
-  });
-
-  on('POST', '/api/parent/devices/:id/delete', 'parent', (ctx) => {
-    store.removeDevice(Number(ctx.params.id));
+  // A new key retires the old link and every device that opened it.
+  on('POST', '/api/parent/kid-link', 'parent', () => {
+    auth.rotateKidKey();
     return parentState();
   });
 
@@ -310,7 +297,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
       voices: Object.fromEntries(Object.entries(GIRLS).map(([k, g]) => [k, (store.getSetting('voices') || {})[k] || g.voice])),
       girls: Object.fromEntries(Object.entries(GIRLS).map(([k, g]) => [k, { name: g.name }])),
       pets: Object.fromEntries(Object.entries(PETS).map(([k, p]) => [k, { name: p.name, kind: p.kind }])),
-      devices: store.listDevices(),
+      kidKey: auth.kidKey(),
       tablets: hub.size,
       usage: { chat: store.usage(now.date, 'chat'), asr: store.usage(now.date, 'asr'), tts: store.usage(now.date, 'tts'), limits: config.limits },
       tts: Boolean(config.ttsAppId),
@@ -394,6 +381,16 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     const pending = [];
 
     try {
+      // The kid link: a valid key becomes a cookie, then the key leaves the address bar.
+      if (req.method === 'GET' && pathname === '/' && url.searchParams.has('k')) {
+        const headers = { Location: '/', 'Cache-Control': 'no-store' };
+        if (auth.keyMatches(url.searchParams.get('k'))) {
+          headers['Set-Cookie'] = cookie(KID_COOKIE, auth.kidCookieValue(), { maxAge: KID_TTL_S, secure });
+        }
+        res.writeHead(302, headers);
+        res.end();
+        return;
+      }
       const m = match(req.method, pathname);
       if (!m) {
         if (req.method === 'GET' && (await serveStatic(req, res, pathname))) return;
@@ -401,9 +398,9 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
       }
       const ctx = { req, res, url, params: m.params, cookies, secure, ip, body: {}, setCookie: (c) => pending.push(c) };
       if (m.route.access === 'parent' && !auth.isParent(cookies)) throw new HttpError(401, '请先登录家长后台');
-      if (m.route.access === 'device') {
-        ctx.device = auth.device(cookies);
-        if (!ctx.device && !auth.isParent(cookies)) throw new HttpError(401, '这台设备还没配对');
+      if (m.route.access === 'kid') {
+        ctx.kid = auth.isKid(cookies);
+        if (!ctx.kid && !auth.isParent(cookies)) throw new HttpError(401, '这个链接已经失效，请向妈妈要新的链接');
       }
       if (req.method === 'POST') ctx.body = await readJson(req, pathname === '/api/asr' ? 2_000_000 : 64_000);
 

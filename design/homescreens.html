@@ -1,0 +1,481 @@
+<title>沫沫主界面方案</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=ZCOOL+XiaoWei&family=ZCOOL+KuaiLe&family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+/* Layout: a sticky picker (girl, pet, stage, time, state), then four options. Each option is a
+   live tablet + phone mockup built from the real assets, with notes; a comparison closes the page.
+   Page chrome uses the casting page's palette; the mockups keep their own fixed colours because
+   they are pictures of the app. */
+:root{
+  --ground:#EDF0F1; --card:#FAFBFB; --sunk:#E3E8EA; --ink:#1E2932; --ink-2:#4A5864; --muted:#6F7C87; --rule:#D4DBDF;
+  --seal:#BF3B2A; --seal-ink:#FFF7F2; --qing:#2D6A88; --good:#3F8A5A;
+  --shadow:0 1px 2px rgba(30,41,50,.06),0 12px 30px rgba(30,41,50,.08);
+  --f-display:"ZCOOL XiaoWei","Songti SC","STSong","Noto Serif SC",serif;
+  --f-body:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  --f-brush:"Ma Shan Zheng","STKaiti","KaiTi",serif;
+  --f-kid:"ZCOOL KuaiLe","PingFang SC","Microsoft YaHei",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#11171B; --card:#192127; --sunk:#222C33; --ink:#E7ECEF; --ink-2:#B3BEC5; --muted:#8693A0; --rule:#2B363E;
+    --seal:#DC5A45; --seal-ink:#1A0D0A; --qing:#72B4D3; --good:#6CC08A;
+    --shadow:0 1px 2px rgba(0,0,0,.35),0 12px 30px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#11171B; --card:#192127; --sunk:#222C33; --ink:#E7ECEF; --ink-2:#B3BEC5; --muted:#8693A0; --rule:#2B363E;
+  --seal:#DC5A45; --seal-ink:#1A0D0A; --qing:#72B4D3; --good:#6CC08A;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 12px 30px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--ground)}
+.wrap{max-width:1240px;margin:0 auto;padding-block:44px 88px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+
+/* header */
+.top{display:grid;gap:10px;max-width:780px}
+.kicker{margin:0;font-size:12.5px;letter-spacing:.14em;color:var(--qing);font-weight:500}
+h1{margin:0;font-family:var(--f-display);font-weight:400;font-size:clamp(32px,5vw,48px);line-height:1.15;text-wrap:balance}
+.lede{margin:0;color:var(--ink-2);max-width:62ch}
+.lede b{color:var(--ink);font-weight:500}
+
+/* sticky picker */
+.ctl{position:static;z-index:6;margin-top:24px;background:color-mix(in srgb,var(--ground) 92%,transparent);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-bottom:1px solid var(--rule);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px 18px}
+@media (min-width:700px){.ctl{position:sticky;top:env(safe-area-inset-top,0px)}}
+.grp{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.grp>span{font-size:12.5px;color:var(--muted);letter-spacing:.06em;margin-right:2px}
+.chip{font:inherit;font-size:14px;line-height:1;padding:7px 12px;border-radius:999px;border:1px solid var(--rule);background:var(--card);color:var(--ink);cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--seal);border-color:var(--seal);color:var(--seal-ink);font-weight:700}
+.chip:focus-visible{outline:2px solid var(--qing);outline-offset:2px}
+
+/* option sections */
+.opt{margin-top:52px;display:grid;gap:18px}
+.opt-head{display:flex;align-items:flex-start;gap:14px;border-top:1px solid var(--rule);padding-top:22px}
+.mark{flex:none;display:grid;place-items:center;width:40px;height:40px;border:2px solid var(--seal);border-radius:6px;color:var(--seal);font-family:var(--f-display);font-size:24px;line-height:1}
+.opt-head h2{margin:0;font-family:var(--f-display);font-weight:400;font-size:30px;line-height:1.15}
+.opt-head p{margin:4px 0 0;color:var(--ink-2);max-width:66ch}
+.rec{display:inline-block;margin-left:8px;vertical-align:4px;font-family:var(--f-body);font-size:12.5px;font-weight:700;color:var(--seal-ink);background:var(--seal);border-radius:999px;padding:2px 10px}
+.frames{display:grid;gap:22px;grid-template-columns:minmax(0,1fr);align-items:center}
+@media (min-width:860px){.frames{grid-template-columns:minmax(0,1fr) minmax(0,230px)}}
+.frames .phone{width:min(230px,70vw);justify-self:center}
+.notes{margin:0;display:grid;gap:10px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:760px){.notes{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.notes div{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:12px 14px;min-width:0}
+.notes dt{font-size:12.5px;color:var(--muted);letter-spacing:.06em}
+.notes dd{margin:2px 0 0;font-size:14px;color:var(--ink-2)}
+
+/* comparison */
+.cmp{margin-top:56px;display:grid;gap:16px}
+.cmp h2{margin:0;font-family:var(--f-display);font-weight:400;font-size:28px;border-top:1px solid var(--rule);padding-top:22px}
+.tbl-wrap{overflow-x:auto;background:var(--card);border-radius:14px;border:1px solid var(--rule)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{font-weight:500;color:var(--muted);font-size:13px;background:var(--sunk)}
+tbody th{font-weight:500;white-space:nowrap}
+tr:last-child td,tr:last-child th{border-bottom:0}
+.note{margin:0;font-size:13.5px;color:var(--muted);max-width:80ch}
+.say-rec{margin:0;max-width:72ch;color:var(--ink-2)}
+.say-rec b{color:var(--ink);font-weight:500}
+
+/* ---- mockups ---------------------------------------------------------------------------
+   Everything inside is placed in container units, so one design scales from a phone-wide
+   tablet picture to the full column; a portrait container switches to the phone layout. */
+.mock{position:relative;overflow:hidden;container-type:size;container-name:mock;isolation:isolate;background:#20262c;
+  font-family:var(--f-kid);color:#2A2A33;-webkit-user-select:none;user-select:none;max-width:100%}
+.mock.tab{width:100%;aspect-ratio:16/10;border-radius:14px;box-shadow:0 0 0 7px #1d2228,0 14px 34px rgba(0,0,0,.22)}
+.mock.phone{aspect-ratio:9/19.5;border-radius:26px;box-shadow:0 0 0 6px #1d2228,0 14px 34px rgba(0,0,0,.22)}
+.mock>*{position:absolute}
+.m-bg{inset:0}
+.m-bg img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:opacity .7s ease}
+.m-bg .night,.m-fore .night{opacity:0}
+.mock[data-time="night"] .m-bg .night,.mock[data-time="night"] .m-fore .night{opacity:1}
+.m-girl,.m-pet{aspect-ratio:3/4;bottom:0}
+.m-girl>*,.m-pet>*{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:50% 100%;display:block}
+.m-girl [hidden],.m-pet [hidden]{display:none}
+.m-girl{transform-origin:50% 100%}
+.mock .m-girl.breathe{animation:m-breathe 4.6s ease-in-out infinite}
+.mock[data-mode="talk"] .m-girl.breathe{animation:m-talk .5s ease-in-out infinite}
+.mock .m-pet.breathe{animation:m-breathe 3.8s ease-in-out infinite;transform-origin:50% 100%}
+@keyframes m-breathe{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-.35%) scale(1.008)}}
+@keyframes m-talk{0%,100%{transform:translateY(0)}50%{transform:translateY(-.7%)}}
+
+.m-top{left:2.4cqw;top:2.8cqh;display:flex;align-items:center;gap:.8cqw;font-size:1.45cqw;line-height:1.2;z-index:3}
+.m-top span{border-radius:999px;padding:.55cqw 1.1cqw;background:rgba(255,255,255,.78);white-space:nowrap}
+.m-date{font-weight:700}
+.m-seal{background:#C8402F!important;color:#fff;font-weight:700}
+.m-say{left:3cqw;bottom:3.6cqh;width:50cqw;padding:1.3cqw 1.8cqw 1.5cqw;border-radius:1.8cqw;background:rgba(255,255,255,.88);z-index:3;box-shadow:0 .6cqw 2cqw rgba(30,40,60,.14)}
+.m-name{display:block;font-size:1.35cqw;color:#3F86A8;margin-bottom:.3cqw}
+.m-line{margin:0;font-size:1.85cqw;line-height:1.45}
+.m-tasks{list-style:none;margin:0;padding:0;z-index:3;display:grid;gap:.9cqw}
+.m-tasks li{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:.8cqw;font-size:1.55cqw;line-height:1.2}
+.m-tasks b{font-weight:400}
+.m-tasks i{font-style:normal;font-size:1.2cqw;color:#5D6270}
+.m-tasks .done i{color:#3E9A63}
+.m-love{z-index:3;display:grid;grid-template-columns:auto 1fr;align-items:center;gap:.3cqw .9cqw;font-size:1.3cqw;line-height:1.2}
+.m-love em{grid-column:1/-1;height:.9cqw;border-radius:99px;background:rgba(0,0,0,.12);overflow:hidden}
+.m-love em i{display:block;height:100%;width:var(--fill,40%);border-radius:inherit;background:#C8402F}
+.m-stage{justify-self:start;font-size:1.1cqw;padding:.15cqw .7cqw;border-radius:99px;background:rgba(200,64,47,.12);color:#A8352A}
+.m-mic{right:3cqw;bottom:4.5cqh;z-index:3;display:grid;place-items:center;width:27cqw;height:10.5cqh;border-radius:999px;font-size:2.1cqw;color:#fff;background:#3F86A8;box-shadow:0 .7cqw 1.8cqw rgba(0,0,0,.2)}
+.m-stars,.m-shade,.m-fore{inset:0;pointer-events:none}
+
+/* A 晕染: the character's own background spreads across the screen. No cut-outs. */
+.wash .m-bg{background:linear-gradient(90deg,var(--gc) 0%,var(--gc) 28%,var(--pc) 52%,var(--pc) 100%)}
+.wash .m-girl{left:-1cqw;height:100cqh;
+  -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 16%,#000 80%,transparent 100%),linear-gradient(180deg,transparent 0,#000 14%);
+  -webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent 0,#000 16%,#000 80%,transparent 100%),linear-gradient(180deg,transparent 0,#000 14%);mask-composite:intersect}
+.wash .m-pet{left:40cqw;height:64cqh;-webkit-mask-image:radial-gradient(ellipse 50% 50% at 50% 52%,#000 58%,transparent 100%);mask-image:radial-gradient(ellipse 50% 50% at 50% 52%,#000 58%,transparent 100%)}
+.wash .m-girl>*,.wash .m-pet>*{object-fit:cover}
+.wash .m-shade{z-index:2;background:radial-gradient(ellipse at 30% 10%,rgba(40,46,92,.35),rgba(14,18,42,.62));mix-blend-mode:multiply;opacity:0;transition:opacity .7s ease}
+.wash .m-stars{z-index:2;opacity:0;transition:opacity .7s ease;background:
+  radial-gradient(circle,#fff 0 .18cqw,transparent .22cqw) 12% 16%/9cqw 11cqh,
+  radial-gradient(circle,rgba(255,255,255,.8) 0 .12cqw,transparent .16cqw) 40% 8%/13cqw 9cqh;
+  -webkit-mask-image:linear-gradient(180deg,#000,transparent 45%);mask-image:linear-gradient(180deg,#000,transparent 45%)}
+.wash[data-time="night"] .m-shade,.wash[data-time="night"] .m-stars{opacity:1}
+.wash .m-say,.wash .m-tasks,.wash .m-love{background:rgba(255,255,255,.6);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.7)}
+.wash .m-tasks{right:3cqw;top:12cqh;width:27cqw;padding:1.4cqw;border-radius:1.6cqw}
+.wash .m-love{right:3cqw;top:52cqh;width:27cqw;padding:1.1cqw 1.4cqw;border-radius:1.4cqw}
+.wash .m-mic{background:rgba(255,255,255,.35);border:2px solid rgba(255,255,255,.85);color:#1f2a33;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);font-weight:700}
+
+/* B 庭院: cut-out characters standing in a courtyard; paper dialogue, wooden task plaques. */
+.court .m-girl{left:6cqw;height:93cqh}
+.court .m-pet{left:41cqw;height:40cqh;bottom:1.5cqh}
+.court .m-top span{background:rgba(251,246,234,.92);font-family:var(--f-brush);font-size:1.7cqw}
+.court .m-seal{font-family:var(--f-brush)!important;border-radius:.4cqw!important;font-size:1.9cqw!important}
+.court .m-say{background:linear-gradient(180deg,#FBF6EA,#F2E8D2);border-radius:.6cqw;border-top:.55cqw solid #8B5A3C;border-bottom:.55cqw solid #8B5A3C;padding-top:1.9cqw}
+.court .m-name{position:absolute;top:-1.6cqw;left:1.6cqw;margin:0;padding:.25cqw 1.1cqw;background:#B8392B;color:#fff;font-family:var(--f-brush);font-size:1.7cqw;border-radius:.3cqw}
+.court .m-tasks{right:5cqw;top:37cqh;width:25cqw;gap:1.3cqw}
+.court .m-tasks li{position:relative;padding:.9cqw 1.3cqw;border-radius:.5cqw;color:#FFF6E5;font-family:var(--f-brush);font-size:1.75cqw;
+  background:repeating-linear-gradient(90deg,rgba(0,0,0,.05) 0 .2cqw,transparent .2cqw 1.6cqw),linear-gradient(180deg,#A86F49,#7E4E31);box-shadow:0 .4cqw 1cqw rgba(60,30,10,.3)}
+.court .m-tasks li::before{content:"";position:absolute;left:50%;top:-1.3cqw;width:.25cqw;height:1.3cqw;background:#C0392B}
+.court .m-tasks i{color:#FCE3B5;font-family:var(--f-kid)}
+.court .m-tasks .done i{color:#C9F0C9}
+.court .m-love{right:5cqw;top:66cqh;width:25cqw;color:#5B3B26;padding:.8cqw 1.2cqw;border-radius:.6cqw;background:rgba(251,246,234,.9)}
+.court .m-mic{right:5cqw;width:25cqw;font-family:var(--f-brush);font-size:2.2cqw;
+  background:radial-gradient(ellipse at 35% 25%,#B8E0C6,#4E9A73 55%,#2F6B4D);border:.3cqw solid rgba(255,255,255,.75)}
+
+/* C 书房: a study; today's tasks are notes pinned on the corkboard, the pet sits on the desk. */
+.study .m-girl{left:-1cqw;height:92cqh}
+.study .m-pet{left:49cqw;height:30cqh;bottom:8.5cqh}
+.study .m-top{flex-direction:column;align-items:stretch;gap:0;left:auto;right:3cqw;top:3cqh;width:11cqw;border-radius:.8cqw;overflow:hidden;box-shadow:0 .5cqw 1.2cqw rgba(0,0,0,.2);transform:rotate(2deg)}
+.study .m-top span{border-radius:0;text-align:center;padding:.35cqw .4cqw;background:#FFFDF7}
+.study .m-date{order:2;font-size:1.25cqw}
+.study .m-seal{order:1;font-size:2.4cqw;padding:.5cqw!important}
+.study .m-next{order:3;font-size:1cqw;white-space:normal!important;color:#5D6270}
+.study .m-tasks{left:45.5cqw;top:37cqh;width:34cqw;grid-template-columns:repeat(3,1fr);gap:1.3cqw}
+.study .m-tasks li{position:relative;grid-template-columns:1fr;justify-items:center;text-align:center;gap:.4cqw;padding:1.6cqw .6cqw 1.1cqw;
+  background:#FFF3A8;box-shadow:0 .4cqw .9cqw rgba(60,40,10,.25);font-size:1.6cqw;transform:rotate(-3deg)}
+.study .m-tasks li:nth-child(2){background:#FFD6DE;transform:rotate(2.5deg) translateY(.6cqw)}
+.study .m-tasks li:nth-child(3){background:#CDEBFF;transform:rotate(-1.5deg)}
+.study .m-tasks li::before{content:"";position:absolute;top:.5cqw;left:50%;width:1cqw;height:1cqw;margin-left:-.5cqw;border-radius:50%;background:radial-gradient(circle at 35% 35%,#ff8a7a,#C8402F)}
+.study .m-tasks span{font-size:2.2cqw}
+.study .m-tasks .done{opacity:.8}
+.study .m-say{width:44cqw;border-radius:1.4cqw;background:rgba(255,253,247,.94)}
+.study .m-love{right:3cqw;top:23cqh;width:16cqw;padding:.7cqw 1cqw;border-radius:.8cqw;background:rgba(255,253,247,.9);transform:rotate(-1.5deg)}
+.study .m-mic{width:24cqw;background:linear-gradient(180deg,#F2B544,#D98E1F);color:#3B2A12;font-weight:700}
+
+/* D 云海: characters rise out of the clouds; the scene's own cloud band is laid over their waists. */
+.sky .m-girl{left:9cqw;height:100cqh;bottom:-5cqh}
+.sky .m-pet{left:45cqw;height:38cqh;bottom:15cqh;z-index:2}
+.sky .m-fore{z-index:1}
+.sky .m-fore i{position:absolute;inset:0;background-size:cover;background-position:50% 50%;transition:opacity .7s ease;
+  -webkit-mask-image:linear-gradient(180deg,transparent 66%,#000 84%);mask-image:linear-gradient(180deg,transparent 66%,#000 84%)}
+.sky .m-fore .day{background-image:url(scenes/sky_day.webp)}
+.sky .m-fore .night{background-image:url(scenes/sky_night.webp)}
+.sky .m-tasks{right:4cqw;top:13cqh;width:27cqw;gap:1.2cqw}
+.sky .m-tasks li{padding:1cqw 1.6cqw;border-radius:99px;background:rgba(255,255,255,.88);box-shadow:0 .4cqw 1.6cqw rgba(80,120,170,.25)}
+.sky .m-love{right:4cqw;top:49cqh;width:27cqw;padding:1cqw 1.5cqw;border-radius:1.6cqw;background:rgba(255,255,255,.7)}
+.sky .m-say{border-radius:3cqw;background:rgba(255,255,255,.9)}
+.sky .m-mic{background:linear-gradient(180deg,#7CC3F2,#3F86C8);box-shadow:0 0 0 .5cqw rgba(255,255,255,.6),0 .8cqw 2.4cqw rgba(40,90,150,.35)}
+.sky[data-time="night"] .m-mic{background:linear-gradient(180deg,#8E8BD8,#5B57B0)}
+
+/* ---- phone (portrait container) ----
+   Generic phone rules carry .mock so they outrank the landscape rules of each direction. */
+@container mock (orientation: portrait){
+  .mock .m-top{left:4cqw;right:4cqw;top:2.2cqh;gap:1.6cqw;font-size:3.4cqw;flex-wrap:wrap}
+  .mock .m-top span{padding:1cqw 2.4cqw}
+  .mock .m-next{display:none}
+  .mock .m-girl{height:47cqh;left:calc(50% - 17.6cqh);top:6.5cqh;bottom:auto}
+  .mock .m-pet{height:21cqh;left:auto;right:0;top:32cqh;bottom:auto}
+  .mock .m-say{left:4cqw;right:4cqw;width:auto;top:51.5cqh;bottom:auto;padding:3cqw 4cqw;border-radius:4cqw}
+  .mock .m-name{font-size:3.4cqw}
+  .mock .m-line{font-size:4.2cqw}
+  .mock .m-tasks{left:4cqw;right:4cqw;top:69cqh;width:auto;gap:1.8cqw;padding:0;background:none;border:0;-webkit-backdrop-filter:none;backdrop-filter:none}
+  .mock .m-tasks li{font-size:3.9cqw;gap:2cqw;padding:2cqw 3.4cqw;border-radius:3cqw;background:rgba(255,255,255,.82)}
+  .mock .m-tasks i{font-size:3.1cqw}
+  .mock .m-love{display:none}
+  .mock .m-mic{left:12cqw;right:12cqw;width:auto;bottom:2.8cqh;height:6.6cqh;font-size:4.6cqw}
+
+  .wash .m-bg{background:linear-gradient(180deg,var(--gc) 0%,var(--gc) 36%,var(--pc) 60%,var(--pc) 100%)}
+  .wash .m-girl{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 12%,#000 88%,transparent 100%),linear-gradient(180deg,transparent 0,#000 10%,#000 78%,transparent 100%);
+    mask-image:linear-gradient(90deg,transparent 0,#000 12%,#000 88%,transparent 100%),linear-gradient(180deg,transparent 0,#000 10%,#000 78%,transparent 100%)}
+  .wash .m-tasks li{background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.7)}
+
+  .court .m-top span{font-size:3.8cqw}
+  .court .m-seal{font-size:4.2cqw!important}
+  .court .m-say{padding-top:4.8cqw;border-radius:1.2cqw;border-top-width:1.2cqw;border-bottom-width:1.2cqw}
+  .court .m-name{font-size:3.8cqw;top:-3.6cqw;left:3.6cqw;padding:.5cqw 2.4cqw}
+  .court .m-tasks li{font-size:4cqw;padding:2cqw 3cqw;border-radius:1.2cqw;background:repeating-linear-gradient(90deg,rgba(0,0,0,.05) 0 .5cqw,transparent .5cqw 4cqw),linear-gradient(180deg,#A86F49,#7E4E31)}
+  .court .m-tasks li::before{display:none}
+  .court .m-mic{left:12cqw;right:12cqw;width:auto;height:6.6cqh;font-size:4.6cqw}
+
+  .study .m-top{right:auto;left:4cqw;width:auto;flex-direction:row;transform:none;border-radius:999px;box-shadow:none;overflow:visible;gap:1.6cqw}
+  .study .m-top span{border-radius:999px;padding:1cqw 2.4cqw;background:rgba(255,253,247,.92)}
+  .study .m-date{order:0;font-size:3.4cqw}
+  .study .m-seal{order:0;font-size:3.4cqw;padding:1cqw 2.4cqw!important}
+  .study .m-tasks{grid-template-columns:repeat(3,1fr);gap:3cqw;top:68cqh}
+  .study .m-tasks li{padding:4.4cqw 1cqw 2.6cqw;font-size:3.6cqw;gap:1cqw;border-radius:0}
+  .study .m-tasks li:nth-child(1){background:#FFF3A8}
+  .study .m-tasks li:nth-child(2){background:#FFD6DE}
+  .study .m-tasks li:nth-child(3){background:#CDEBFF}
+  .study .m-tasks li::before{width:2.6cqw;height:2.6cqw;margin-left:-1.3cqw;top:1cqw}
+  .study .m-tasks span{font-size:5.4cqw}
+
+  .sky .m-fore i{-webkit-mask-image:linear-gradient(180deg,transparent 40%,#000 53%);mask-image:linear-gradient(180deg,transparent 40%,#000 53%)}
+  .sky .m-tasks li{border-radius:99px}
+}
+@media (prefers-reduced-motion:reduce){.mock .m-girl.breathe,.mock .m-pet.breathe{animation:none}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <p class="kicker">MoMo 云端伙伴 · 登录后的主界面</p>
+    <h1>主界面：四组方案</h1>
+    <p class="lede">角色不再装在方块里，而是和背景融成一幅画。四组都用真实素材做成了能操作的样稿：左边是横放的平板，右边是竖拿的手机。上面可以换 <b>少女、宠物、进化阶段、白天黑夜和说话状态</b>，看看每种搭配在每组里是什么样子。</p>
+  </header>
+
+  <div class="ctl" role="group" aria-label="样稿设置">
+    <div class="grp" id="c-girl"><span>少女</span></div>
+    <div class="grp" id="c-pet"><span>宠物</span></div>
+    <div class="grp" id="c-stage"><span>阶段</span></div>
+    <div class="grp" id="c-time"><span>时间</span></div>
+    <div class="grp" id="c-mode"><span>状态</span></div>
+  </div>
+
+  <section class="opt" aria-labelledby="h-a">
+    <div class="opt-head"><span class="mark">A</span><div><h2 id="h-a">晕染</h2><p>角色自己的底色向四周晕开，少女那一侧是她的颜色，宠物那一侧是宠物的颜色，中间自然过渡。界面是半透明的磨砂玻璃。</p></div></div>
+    <div class="frames">
+      <div class="mock tab wash" data-dir="wash" role="img" aria-label="方案 A 晕染，平板横屏样稿"></div>
+      <div class="mock phone wash" data-dir="wash" role="img" aria-label="方案 A 晕染，手机竖屏样稿"></div>
+    </div>
+    <dl class="notes">
+      <div><dt>怎么融合</dt><dd>不抠图，把现有动画的边缘柔化，页面底色取自角色画面边缘的颜色。</dd></div>
+      <div><dt>好处</dt><dd>现在的 24 段动画直接能用，所有平板都能播，改动最小，一两天能上线。</dd></div>
+      <div><dt>代价</dt><dd>没有场景，画面只有颜色；有些少女和宠物的颜色搭在一起会偏怪（比如灰蓝配金黄）。</dd></div>
+    </dl>
+  </section>
+
+  <section class="opt" aria-labelledby="h-b">
+    <div class="opt-head"><span class="mark">B</span><div><h2 id="h-b">庭院</h2><p>白墙灰瓦的中式庭院，少女站在月洞门前，宠物在石板地上。对话框像一张宣纸，今天的任务是挂在墙上的木牌，D 几是一枚红印章。</p></div></div>
+    <div class="frames">
+      <div class="mock tab court" data-dir="court" role="img" aria-label="方案 B 庭院，平板横屏样稿"></div>
+      <div class="mock phone court" data-dir="court" role="img" aria-label="方案 B 庭院，手机竖屏样稿"></div>
+    </div>
+    <dl class="notes">
+      <div><dt>怎么融合</dt><dd>把角色抠成透明背景，直接站进场景里；腰部以下被对话框挡住，像动画片里的对话画面。</dd></div>
+      <div><dt>好处</dt><dd>国风味道最浓，和四个少女的服装最搭；夜里灯笼亮起，月洞门里是月亮。</dd></div>
+      <div><dt>代价</dt><dd>24 段动画要抠成透明背景（约 1 小时机器时间，不花钱）；场景图每张约 0.3 元。</dd></div>
+    </dl>
+  </section>
+
+  <section class="opt" aria-labelledby="h-c">
+    <div class="opt-head"><span class="mark">C</span><div><h2 id="h-c">书房<span class="rec">推荐</span></h2><p>一间有圆窗和竹子的书房。今天的任务是钉在软木板上的便签，宠物蹲在书桌上，右上角是一本小台历，写着今天是 D 几。</p></div></div>
+    <div class="frames">
+      <div class="mock tab study" data-dir="study" role="img" aria-label="方案 C 书房，平板横屏样稿"></div>
+      <div class="mock phone study" data-dir="study" role="img" aria-label="方案 C 书房，手机竖屏样稿"></div>
+    </div>
+    <dl class="notes">
+      <div><dt>怎么融合</dt><dd>和庭院一样抠图进场景；任务便签、台历、书桌都是场景里本来就有的东西。</dd></div>
+      <div><dt>好处</dt><dd>和「写作业、练琴、看课表」最贴近，孩子一眼看懂哪里是任务；夜里台灯亮着，适合睡前。</dd></div>
+      <div><dt>代价</dt><dd>同庭院：抠动画约 1 小时机器时间；软木板只放得下 3 到 4 张便签，任务多时要翻页。</dd></div>
+    </dl>
+  </section>
+
+  <section class="opt" aria-labelledby="h-d">
+    <div class="opt-head"><span class="mark">D</span><div><h2 id="h-d">云海</h2><p>角色从云海里升起来，宠物浮在云上。任务是飘着的小云朵，白天有彩虹，夜里是满月和星星。</p></div></div>
+    <div class="frames">
+      <div class="mock tab sky" data-dir="sky" role="img" aria-label="方案 D 云海，平板横屏样稿"></div>
+      <div class="mock phone sky" data-dir="sky" role="img" aria-label="方案 D 云海，手机竖屏样稿"></div>
+    </div>
+    <dl class="notes">
+      <div><dt>怎么融合</dt><dd>抠图进场景，再把场景里的云层盖在角色腰上，看起来像从云里冒出来。</dd></div>
+      <div><dt>好处</dt><dd>最梦幻，云笈这种仙侠风的角色最合适；画面干净，文字最好认。</dd></div>
+      <div><dt>代价</dt><dd>和课表、任务没什么联系，更像一个童话背景；同样要抠动画。</dd></div>
+    </dl>
+  </section>
+
+  <section class="cmp" aria-labelledby="h-cmp">
+    <h2 id="h-cmp">怎么选</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th scope="col">方案</th><th scope="col">角色怎么放</th><th scope="col">今天的任务</th><th scope="col">夜里</th><th scope="col">要做的事</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">A 晕染</th><td>带底色的动画，边缘柔化</td><td>磨砂面板</td><td>整体变暗，出星星</td><td>只改页面，最快</td></tr>
+          <tr><th scope="row">B 庭院</th><td>抠成透明，站在月洞门前</td><td>墙上的木牌</td><td>灯笼亮，弯月</td><td>抠 24 段动画，约 1 小时</td></tr>
+          <tr><th scope="row">C 书房</th><td>抠成透明，站在圆窗前</td><td>软木板上的便签</td><td>台灯亮，窗外弯月</td><td>抠 24 段动画，约 1 小时</td></tr>
+          <tr><th scope="row">D 云海</th><td>抠成透明，从云里升起</td><td>飘着的小云朵</td><td>满月和星星</td><td>抠 24 段动画，约 1 小时</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="say-rec">我推荐 <b>C 书房</b>：任务直接贴在软木板上，台历写着 D 几，和沫沫每天要做的事最贴近；夜里台灯亮着，睡前也很自然。也可以让 <b>每个少女配一个场景</b>，比如云笈配云海、彩练配庭院，换少女时场景跟着换。</p>
+    <p class="note">样稿里，云笈在白天待机时是真正抠好的动画；其他组合暂时用抠好的静态图，加了轻微的呼吸动作。对话、任务和好感度都是示例内容。这一轮生成了 6 张场景图（白天、夜晚各 3 张），约 1.8 元；抠图在本地完成，不花钱。</p>
+  </section>
+</div>
+
+<video id="alphaSrc" src="alpha/girl_b_idle_alpha.mp4" muted loop playsinline preload="auto" hidden></video>
+
+<script>
+(function(){
+  var GIRLS={a:{name:'星灯',color:'#e9cccb'},b:{name:'云笈',color:'#96b8c6'},c:{name:'彩练',color:'#c6a47f'},d:{name:'芯芯',color:'#9ea2d8'}};
+  var PETS={1:{name:'糖糖',color:'#eee0cb',stages:['小奶猫','云纹发光','脚踏祥云','守护灵猫']},
+            2:{name:'团团',color:'#d8bc94',stages:['麒麟幼崽','角长鬃燃','少年麒麟','祥瑞神兽']},
+            3:{name:'小九',color:'#e1b3c3',stages:['1 尾','3 尾','6 尾','9 尾']},
+            4:{name:'青青',color:'#93bccb',stages:['抱珠龙宝','角分叉长须','腾云小龙','青龙']}};
+  var POINTS=[[120,'12%'],[640,'49%'],[1580,'39%'],[2800,'100%']];
+  var SCENE={court:'courtyard',study:'study',sky:'sky'};
+  var st={g:'b',p:'3',s:'2',time:'day',mode:'idle'};
+  var calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function chips(id,items,key){
+    var box=document.getElementById(id);
+    items.forEach(function(it){
+      var b=document.createElement('button');b.type='button';b.className='chip';b.textContent=it[1];
+      b.setAttribute('aria-pressed',String(st[key]===it[0]));
+      b.addEventListener('click',function(){st[key]=it[0];box.querySelectorAll('.chip').forEach(function(c,i){c.setAttribute('aria-pressed',String(items[i][0]===st[key]));});render();});
+      box.appendChild(b);
+    });
+  }
+  chips('c-girl',Object.keys(GIRLS).map(function(k){return [k,GIRLS[k].name];}),'g');
+  chips('c-pet',Object.keys(PETS).map(function(k){return [k,PETS[k].name];}),'p');
+  chips('c-stage',[['1','1'],['2','2'],['3','3'],['4','4']],'s');
+  chips('c-time',[['day','白天'],['night','夜晚']],'time');
+  chips('c-mode',[['idle','待机'],['talk','说话']],'mode');
+
+  function build(el){
+    var dir=el.dataset.dir, cut=dir!=='wash', sc=SCENE[dir];
+    var media=cut?'<img class="sprite" alt="">':'<video class="loop" muted loop playsinline preload="none"></video><img class="sprite" alt="" hidden>';
+    el.innerHTML=
+      '<div class="m-bg">'+(cut?'<img class="day" src="scenes/'+sc+'_day.webp" alt=""><img class="night" src="scenes/'+sc+'_night.webp" alt="">':'')+'</div>'+
+      '<div class="m-girl'+(cut?' breathe':'')+'">'+media+(cut?'<canvas class="alpha" width="720" height="960" hidden></canvas>':'')+'</div>'+
+      (dir==='sky'?'<div class="m-fore"><i class="day"></i><i class="night"></i></div>':'')+
+      '<div class="m-pet'+(cut?' breathe':'')+'">'+media+'</div>'+
+      (dir==='wash'?'<div class="m-shade"></div><div class="m-stars"></div>':'')+
+      '<div class="m-top"><span class="m-date">10月28日 周三</span><span class="m-seal">D3</span><span class="m-next">下一件：🎹 练琴 19:30</span></div>'+
+      '<div class="m-say"><b class="m-name"></b><p class="m-line"></p></div>'+
+      '<ul class="m-tasks"><li class="done"><span>📝</span><b>写作业</b><i>✓ 完成</i></li><li><span>🎹</span><b>练琴</b><i>19:30</i></li><li><span>🦷</span><b>刷牙洗脸</b><i>21:00</i></li></ul>'+
+      '<div class="m-love"><b class="m-pname"></b><span class="m-stage"></span><em><i></i></em></div>'+
+      '<div class="m-mic">按一下说话</div>';
+    el.setAttribute('aria-hidden','false');
+    el.querySelectorAll(':scope > *').forEach(function(n){n.setAttribute('aria-hidden','true');});
+  }
+  var mocks=[].slice.call(document.querySelectorAll('.mock'));
+  mocks.forEach(build);
+
+  function line(){
+    var pet=PETS[st.p].name;
+    if(st.time==='night') return '今天辛苦啦，'+pet+'已经睡着了。明天见，晚安～';
+    if(st.mode==='talk') return '明天是 D4，有英语和美术。美术课记得带彩笔哦！';
+    return '沫沫，下午 4 点写作业。写完跟我说一声，我帮你记下来！';
+  }
+
+  function setVideo(v,src){
+    if(v.getAttribute('src')===src) return;
+    v.src=src;
+    if(v.closest('.mock').dataset.visible==='1'&&!calm){var p=v.play();if(p&&p.catch)p.catch(function(){});}
+  }
+
+  function render(){
+    var g=GIRLS[st.g], p=PETS[st.p], si=Number(st.s)-1, night=st.time==='night', talk=st.mode==='talk';
+    mocks.forEach(function(el){
+      var dir=el.dataset.dir, cut=dir!=='wash';
+      el.dataset.time=st.time; el.dataset.mode=night?'idle':st.mode;
+      el.style.setProperty('--gc',g.color); el.style.setProperty('--pc',p.color);
+      el.querySelector('.m-name').textContent=g.name;
+      el.querySelector('.m-line').textContent=line();
+      el.querySelector('.m-pname').textContent=p.name;
+      el.querySelector('.m-stage').textContent=p.stages[si]+' · 好感度 '+POINTS[si][0];
+      el.querySelector('.m-love em i').style.setProperty('--fill',POINTS[si][1]);
+      var gBox=el.querySelector('.m-girl'), pBox=el.querySelector('.m-pet');
+      if(cut){
+        var gImg=gBox.querySelector('.sprite');
+        gImg.src=night?'sprites/expr_'+st.g+'_sleepy.webp':talk?'sprites/expr_'+st.g+'_talk.webp':'sprites/girl_'+st.g+'.webp';
+        gImg.alt=g.name;
+        pBox.querySelector('.sprite').src='sprites/pet_'+st.p+'_'+st.s+(night?'_sleepy':'')+'.webp';
+        var useAlpha=alpha.ok&&st.g==='b'&&!night&&!talk;
+        gBox.querySelector('.alpha').hidden=!useAlpha; gImg.hidden=useAlpha;
+        gBox.classList.toggle('breathe',!useAlpha);
+      }else{
+        var gv=gBox.querySelector('video'), gi=gBox.querySelector('img'), pv=pBox.querySelector('video'), pi=pBox.querySelector('img');
+        gv.hidden=night; gi.hidden=!night; pv.hidden=night; pi.hidden=!night;
+        if(night){gi.src='img/expr/'+st.g+'_sleepy.jpg'; pi.src='img/pet/'+st.p+'_'+st.s+'_sleepy.jpg'; gv.pause(); pv.pause();}
+        else{setVideo(gv,'vid/girl_'+st.g+'_'+(talk?'talk':'idle')+'.mp4'); setVideo(pv,'vid/pet_'+st.p+'_'+st.s+'.mp4');}
+      }
+    });
+  }
+
+  // Yunji's idle loop with a real transparent background: the MP4 holds colour on top and the
+  // matte below; WebGL puts them back together on each mockup's canvas.
+  var alpha={ok:false,gls:[]};
+  (function(){
+    var vid=document.getElementById('alphaSrc');
+    var VS='attribute vec2 p;varying vec2 v;void main(){v=vec2((p.x+1.)*.5,(1.-p.y)*.5);gl_Position=vec4(p,0.,1.);}';
+    var FS='precision mediump float;varying vec2 v;uniform sampler2D t;void main(){vec3 c=texture2D(t,vec2(v.x,v.y*.5)).rgb;float a=texture2D(t,vec2(v.x,.5+v.y*.5)).r;gl_FragColor=vec4(c*a,a);}';
+    function setup(cv){
+      var gl=cv.getContext('webgl',{premultipliedAlpha:true,alpha:true});
+      if(!gl) return null;
+      function sh(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return gl.getShaderParameter(s,gl.COMPILE_STATUS)?s:null;}
+      var vs=sh(gl.VERTEX_SHADER,VS), fs=sh(gl.FRAGMENT_SHADER,FS); if(!vs||!fs) return null;
+      var pr=gl.createProgram(); gl.attachShader(pr,vs); gl.attachShader(pr,fs); gl.linkProgram(pr);
+      if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) return null;
+      gl.useProgram(pr);
+      var buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+      gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+      var loc=gl.getAttribLocation(pr,'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+      var tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      return {gl:gl,cv:cv};
+    }
+    try{
+      document.querySelectorAll('canvas.alpha').forEach(function(cv){var g=setup(cv); if(g) alpha.gls.push(g);});
+    }catch(e){alpha.gls=[];}
+    if(!alpha.gls.length||calm) return;
+    function draw(){
+      if(vid.readyState>=2){
+        alpha.gls.forEach(function(o){
+          if(o.cv.hidden||o.cv.closest('.mock').dataset.visible!=='1') return;
+          var gl=o.gl; gl.viewport(0,0,o.cv.width,o.cv.height);
+          gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,vid);
+          gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+        });
+      }
+      if(vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+    }
+    vid.addEventListener('playing',function(){ if(!alpha.ok){alpha.ok=true; render();} },{once:false});
+    vid.addEventListener('error',function(){alpha.ok=false; render();});
+    var p=vid.play(); if(p&&p.catch) p.catch(function(){});
+    if(vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+  })();
+
+  // Only mockups on screen play their videos.
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        var el=e.target; el.dataset.visible=e.isIntersecting?'1':'0';
+        el.querySelectorAll('video').forEach(function(v){
+          if(e.isIntersecting&&!v.hidden&&v.getAttribute('src')&&!calm){var p=v.play();if(p&&p.catch)p.catch(function(){});}
+          else if(!e.isIntersecting) v.pause();
+        });
+      });
+    },{rootMargin:'120px 0px'});
+    mocks.forEach(function(m){io.observe(m);});
+  }else{
+    mocks.forEach(function(m){m.dataset.visible='1';});
+  }
+  render();
+})();
+</script>

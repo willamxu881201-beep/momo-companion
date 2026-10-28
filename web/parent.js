@@ -211,15 +211,10 @@ function renderCompanion(s) {
 }
 
 function renderTablets(s) {
-  $('online').textContent = s.tablets ? `现在有 ${s.tablets} 台平板在线` : '现在没有平板在线（平板上的页面要开着）';
-  $('devices').replaceChildren(
-    ...(s.devices.length
-      ? s.devices.map((d) => h('li', {},
-          h('span', { class: 'grow' }, d.name, h('br'), h('small', { class: 'hint' }, `配对于 ${new Date(d.created_at).toLocaleDateString('zh-CN')}${d.last_seen ? ' · 最近 ' + new Date(d.last_seen).toLocaleString('zh-CN') : ''}`)),
-          h('button', { class: 'small no', type: 'button', onclick: () => act(`/api/parent/devices/${d.id}/delete`, {}) }, '移除'),
-        ))
-      : [h('li', { class: 'empty' }, '还没有配对的平板')]),
-  );
+  $('kidUrl').value = `${location.origin}/?k=${s.kidKey}`;
+  $('online').textContent = s.tablets
+    ? `现在有 ${s.tablets} 台设备开着孩子页面`
+    : '现在没有设备开着孩子页面（页面开着才能到点提醒）';
 }
 
 // ---- events -------------------------------------------------------------------
@@ -319,21 +314,20 @@ $('companionForm').addEventListener('submit', (e) => {
   }, $('companionMsg'));
 });
 
-$('pairBtn').addEventListener('click', async () => {
+$('kidCopy').addEventListener('click', async () => {
   try {
-    const r = await api('/api/parent/pair', {});
-    $('pairUrl').value = r.url;
-    $('pairBox').hidden = false;
-  } catch (err) {
-    alertMsg(err.message);
+    await navigator.clipboard.writeText($('kidUrl').value);
+    $('kidCopy').textContent = '已复制';
+  } catch {
+    $('kidUrl').select();
   }
 });
-$('pairCopy').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText($('pairUrl').value);
-    $('pairCopy').textContent = '已复制';
-  } catch {
-    $('pairUrl').select();
+$('kidRotate').addEventListener('click', async () => {
+  if (!confirm('换新链接后，旧链接马上失效，每台设备都要重新打开新链接。确定要换吗？')) return;
+  const s = await act('/api/parent/kid-link', {});
+  if (s) {
+    $('kidCopy').textContent = '复制';
+    $('kidMsg').textContent = '已换成新链接，请在平板上重新打开。';
   }
 });
 

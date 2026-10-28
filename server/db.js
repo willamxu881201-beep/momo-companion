@@ -1,5 +1,5 @@
 // SQLite storage (node:sqlite, no native modules). One file holds the family's
-// data: timetable, tasks, alarms, affinity ledger, paired tablets. Nothing the
+// data: timetable, tasks, alarms, affinity ledger, settings. Nothing the
 // child says is stored here; chat history lives in memory only (see brain.js).
 
 import { DatabaseSync } from 'node:sqlite';
@@ -47,12 +47,6 @@ CREATE TABLE IF NOT EXISTS affinity (
   at INTEGER NOT NULL, date TEXT NOT NULL,
   delta INTEGER NOT NULL, reason TEXT NOT NULL, ref TEXT
 );
-CREATE TABLE IF NOT EXISTS devices (
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL,
-  token_hash TEXT NOT NULL UNIQUE,
-  created_at INTEGER NOT NULL, last_seen INTEGER
-);
-CREATE TABLE IF NOT EXISTS pairing_codes (code_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS parent_sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS usage (
   date TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
@@ -65,6 +59,7 @@ export const DEFAULT_SETTINGS = {
   profile: { kidName: 'MoMo', girl: 'b', pet: '3' },
   hidden: { girls: [], pets: [] },
   quiet: { start: '21:30', end: '06:30' },
+  kidLink: { key: null },
 };
 
 const plain = (row) => (row ? { ...row } : row);
@@ -271,36 +266,7 @@ export class Store {
     return this.db.prepare('SELECT * FROM affinity ORDER BY id DESC LIMIT ?').all(limit).map(plain);
   }
 
-  // ---- devices, pairing, parent sessions ---------------------------------
-
-  addPairingCode(codeHash, expiresAt) {
-    this.db.prepare('DELETE FROM pairing_codes WHERE expires_at < ?').run(Date.now());
-    this.db.prepare('INSERT INTO pairing_codes (code_hash, expires_at) VALUES (?, ?)').run(codeHash, expiresAt);
-  }
-
-  takePairingCode(codeHash) {
-    const row = this.db.prepare('SELECT expires_at FROM pairing_codes WHERE code_hash = ?').get(codeHash);
-    this.db.prepare('DELETE FROM pairing_codes WHERE code_hash = ?').run(codeHash);
-    return !!row && row.expires_at > Date.now();
-  }
-
-  addDevice(name, tokenHash) {
-    this.db.prepare('INSERT INTO devices (name, token_hash, created_at) VALUES (?, ?, ?)').run(name, tokenHash, Date.now());
-  }
-
-  findDevice(tokenHash) {
-    const row = plain(this.db.prepare('SELECT id, name FROM devices WHERE token_hash = ?').get(tokenHash));
-    if (row) this.db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(Date.now(), row.id);
-    return row;
-  }
-
-  listDevices() {
-    return this.db.prepare('SELECT id, name, created_at, last_seen FROM devices ORDER BY id').all().map(plain);
-  }
-
-  removeDevice(id) {
-    this.db.prepare('DELETE FROM devices WHERE id = ?').run(id);
-  }
+  // ---- parent sessions -----------------------------------------------------
 
   addParentSession(tokenHash, expiresAt) {
     this.db.prepare('DELETE FROM parent_sessions WHERE expires_at < ?').run(Date.now());

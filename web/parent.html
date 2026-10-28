@@ -146,18 +146,18 @@
 
   <section id="tab-tablet" class="tab" hidden>
     <div class="card">
-      <h2>配对平板</h2>
-      <p class="hint">点下面的按钮生成一个链接，15 分钟内用沫沫的平板打开它，就配好了。</p>
-      <button id="pairBtn" type="button">生成配对链接</button>
-      <div id="pairBox" class="pair" hidden>
-        <input id="pairUrl" readonly>
-        <button id="pairCopy" type="button" class="secondary">复制</button>
+      <h2>孩子页面的链接</h2>
+      <p class="hint">在平板或手机上打开这个链接就能用，几台设备都行。这个链接就是钥匙，不要发到群里；万一发出去了，点「换一个新链接」，旧链接马上失效。</p>
+      <div class="pair">
+        <input id="kidUrl" readonly aria-label="孩子页面的链接">
+        <button id="kidCopy" type="button" class="secondary">复制</button>
       </div>
+      <button id="kidRotate" type="button" class="secondary">换一个新链接</button>
+      <p id="kidMsg" class="msg" role="status"></p>
     </div>
     <div class="card">
-      <h2>已配对的平板</h2>
+      <h2>在线情况</h2>
       <p id="online" class="hint"></p>
-      <ul id="devices" class="list"></ul>
       <button id="testReminder" type="button" class="secondary">发一条测试提醒</button>
       <p id="testMsg" class="msg" role="status"></p>
     </div>

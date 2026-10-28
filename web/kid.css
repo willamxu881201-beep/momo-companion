@@ -1,24 +1,28 @@
-/* Kid page: one character on a soft ground in her own colors, a big mic, and
-   today's tasks. Single light theme on purpose: it's a picture book, not a
-   productivity app. */
+/* Kid page, design A (晕染). The companion and the pet keep the soft colour they were
+   painted on, and that colour spreads over the whole screen: the girl's on her side, the
+   pet's on its side, meeting in a gradient. Nothing sits in a box; panels are frosted
+   glass. kid.js sets --gc and --pc from the characters on screen.
+   Landscape tablets get one fixed screen; phones and upright tablets get a column that
+   scrolls, with the mic pinned to the bottom. */
 :root {
-  --ink: #2A2A33;
-  --ink-2: #5D6270;
-  --card: rgba(255, 255, 255, 0.82);
-  --line: rgba(42, 42, 51, 0.12);
+  --ink: #23262E;
+  --ink-2: #555B68;
+  --glass: rgba(255, 255, 255, 0.56);
+  --glass-strong: rgba(255, 255, 255, 0.82);
+  --glass-line: rgba(255, 255, 255, 0.7);
   --good: #3E9A63;
-  --wait: #C98A1E;
+  --wait: #B7791F;
   --redo: #C2553B;
-  --g1: #E7F2F7;
-  --g2: #CFE5EF;
-  --accent: #3F86A8;
+  --gc: #94b8c7;
+  --pc: #e2b9cc;
+  --accent: #3A7FA2;
   --accent-ink: #fff;
   --font: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
 }
-body[data-girl="a"] { --g1: #FBF1F3; --g2: #F3D9E1; --accent: #C8607E; }
-body[data-girl="b"] { --g1: #E7F2F7; --g2: #CFE5EF; --accent: #3F86A8; }
-body[data-girl="c"] { --g1: #F8EFDF; --g2: #EBD7B4; --accent: #A8572E; }
-body[data-girl="d"] { --g1: #EFEBF8; --g2: #D9EEF2; --accent: #6E5BC2; }
+body[data-girl="a"] { --accent: #C25A78; }
+body[data-girl="b"] { --accent: #3A7FA2; }
+body[data-girl="c"] { --accent: #A0522D; }
+body[data-girl="d"] { --accent: #6A57BE; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -26,73 +30,66 @@ body {
   margin: 0;
   font-family: var(--font);
   color: var(--ink);
-  background: var(--g2);
+  background: var(--gc);
   -webkit-tap-highlight-color: transparent;
-  overflow-y: auto;
 }
-/* The gradient lives on a fixed layer so it doesn't restart when a phone scrolls. */
-body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(160deg, var(--g1), var(--g2)); }
+/* The two colours meet in a fixed gradient, so it never restarts when a phone scrolls. */
+body::before { content: ""; position: fixed; inset: 0; z-index: -1;
+  background: linear-gradient(180deg, var(--gc) 0%, var(--gc) 32%, var(--pc) 60%, var(--pc) 100%); }
 button { font: inherit; color: inherit; cursor: pointer; }
 [hidden] { display: none !important; }
+.glass { background: var(--glass); border: 1px solid var(--glass-line);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 8px 26px rgba(30, 40, 60, 0.1); }
 
 /* covers ------------------------------------------------------------------ */
-.cover { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; z-index: 30;
-  background: linear-gradient(160deg, var(--g1), var(--g2)); }
-.cover-card { max-width: 520px; background: var(--card); border-radius: 24px; padding: 28px 30px; text-align: center; }
+.cover { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; }
+.cover-card { max-width: 520px; border-radius: 24px; padding: 28px 30px; text-align: center; }
 .cover-card h1 { margin: 0 0 8px; font-size: 26px; }
 .cover-card p { margin: 0; color: var(--ink-2); font-size: 18px; line-height: 1.7; }
-.start-btn { border: 0; background: none; display: grid; justify-items: center; gap: 14px; }
-.start-btn img { width: min(56vw, 360px); aspect-ratio: 3 / 4; object-fit: cover; border-radius: 32px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15); }
-.start-btn span { font-size: 26px; font-weight: 700; color: var(--accent); background: var(--card);
-  padding: 12px 28px; border-radius: 999px; }
+.start-btn { border: 0; background: none; display: grid; justify-items: center; gap: 18px; }
+.start-btn img { width: min(64vw, 50vh, 400px); aspect-ratio: 3 / 4; object-fit: cover; display: block;
+  -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 48%, #000 62%, transparent 100%);
+  mask-image: radial-gradient(ellipse 50% 50% at 50% 48%, #000 62%, transparent 100%); }
+.start-btn span { font-size: 26px; font-weight: 700; color: var(--accent-ink); background: var(--accent);
+  padding: 14px 34px; border-radius: 999px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18); }
 
-/* layout ------------------------------------------------------------------ */
-/* Portrait (phones, upright tablets): bar, bubble, characters, dock stacked;
-   the page may scroll. Landscape tablets: characters left, dock right, no scroll. */
-#app { min-height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start;
-  padding: max(10px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
-@media (min-width: 900px) and (orientation: landscape) {
-  body { overflow: hidden; }
-  #app { height: 100%; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); grid-template-rows: auto 1fr; }
-  .bar { grid-column: 1 / -1; }
-  .dock { align-self: stretch; overflow-y: auto; }
-}
+/* layout: phones and upright tablets ------------------------------------------ */
+#app { position: relative; min-height: 100%; display: grid; grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "bar" "stage" "bubble" "side" "dock"; align-content: start; gap: 12px;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
+.bar { grid-area: bar; }
+.girl, .pet { margin: 0; position: relative; min-width: 0; }
+.girl { grid-area: stage; justify-self: center; height: min(54vh, 112vw); aspect-ratio: 3 / 4; }
+.pet { grid-area: stage; justify-self: end; align-self: end; height: min(24vh, 46vw); aspect-ratio: 3 / 4; margin-right: -10px; z-index: 1; }
+.bubble { grid-area: bubble; margin-top: -10vh; }
+.side { grid-area: side; display: grid; gap: 12px; align-content: start; }
+.dock { grid-area: dock; position: sticky; bottom: max(10px, env(safe-area-inset-bottom)); z-index: 3; display: grid; gap: 10px; }
+/* The pinned mic floats over the list as it scrolls; a fade of the page colour sits behind it. */
+.dock::before { content: ""; position: absolute; z-index: -1; pointer-events: none; left: -14px; right: -14px; top: -28px;
+  bottom: calc(-1 * max(10px, env(safe-area-inset-bottom))); background: linear-gradient(180deg, transparent, var(--pc) 55%); }
+.bar, .bubble, .side { position: relative; z-index: 2; }
 
-.bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 18px; }
-.when { display: flex; align-items: center; gap: 8px; }
-.when b { font-size: 22px; }
-.tag { display: inline-block; padding: 3px 12px; border-radius: 999px; background: var(--card); font-weight: 700; color: var(--accent); }
-.tag.alarm { color: var(--ink); font-weight: 500; }
-.next { color: var(--ink-2); flex: 1 1 200px; min-width: 0; }
-.ghost { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 8px 16px; }
-.ghost.round { width: 64px; height: 64px; padding: 0; font-size: 17px; flex: none; }
-
-/* stage ------------------------------------------------------------------- */
-.stage { position: relative; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.62fr);
-  grid-template-areas: "bubble bubble" "girl pet"; align-items: end; gap: 10px; }
-.stage figure { margin: 0; position: relative; min-width: 0; }
-.girl { grid-area: girl; }
-.pet { grid-area: pet; }
-/* Each character is a stack in one frame: the still at the bottom, always there;
-   looping videos over it; an expression still on top. kid.js lights one upper
-   layer at a time, so if video can't play the still simply stays.
-   Layers crop from the edges, keeping the face (top of the bust) in view. */
-.frame { position: relative; overflow: hidden; border-radius: 28px; background: var(--card);
-  box-shadow: 0 18px 40px rgba(30, 40, 60, 0.12); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Each character is a stack in one frame: the still underneath, looping videos over it,
+   an expression still on top; kid.js lights one upper layer at a time. The frame's
+   edges fade into the colour around it. */
+.frame { position: absolute; inset: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .frame > img, .frame > video { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
   object-fit: cover; object-position: 50% 15%; pointer-events: none; }
 .frame > .loop, .frame > .expr { opacity: 0; transition: opacity 0.25s ease; }
 .frame > .on { opacity: 1; }
-.girl .frame { height: min(46vh, 560px); }
-.pet .frame { height: min(32vh, 400px); }
-@media (min-width: 900px) and (orientation: landscape) {
-  .stage { grid-template-areas: "girl pet"; }
-  .stage .frame { height: auto; aspect-ratio: 3 / 4; }
-  .girl .frame { max-height: min(62vh, 640px); }
-  .pet .frame { max-height: min(40vh, 420px); }
-  .bubble { position: absolute; left: 0; right: 0; top: 0; margin: 0 auto; }
-}
+.girl .frame {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 13%, #000 87%, transparent), linear-gradient(180deg, transparent, #000 8%, #000 80%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, transparent, #000 13%, #000 87%, transparent), linear-gradient(180deg, transparent, #000 8%, #000 80%, transparent);
+  mask-composite: intersect; }
+.pet .frame {
+  -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 52%, #000 56%, transparent 100%);
+  mask-image: radial-gradient(ellipse 50% 50% at 50% 52%, #000 56%, transparent 100%); }
+/* What the pet just did, floating above its head. */
+.pet figcaption { position: absolute; left: 4%; right: 4%; bottom: calc(100% + 4px); z-index: 2; text-align: center;
+  border-radius: 14px; padding: 6px 10px; font-size: 16px; background: var(--glass-strong); }
+
 /* Stills breathe and bob; a playing video already moves, so it doesn't. */
 .girl, .pet { animation: breathe 4.5s ease-in-out infinite; transform-origin: 50% 100%; }
 .pet { animation-duration: 3.6s; }
@@ -100,63 +97,102 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .girl.talking { animation: talk 0.42s ease-in-out infinite; }
 .girl.live.talking { animation: none; }
 .pet.react { animation: hop 0.5s ease-out 2; }
-.pet.evolve .frame { animation: glow 1.4s ease-in-out 3; }
+.pet.evolve .frame { animation: evolve 1.4s ease-in-out 3; }
+.pet.evolve::before { content: ""; position: absolute; inset: -14%; border-radius: 50%; z-index: -1;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 64%); animation: shine 1.4s ease-in-out 3; }
 @keyframes breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.008); } }
 @keyframes talk { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-16px); } }
-@keyframes glow {
-  0%, 100% { box-shadow: 0 18px 40px rgba(30, 40, 60, 0.12); filter: none; }
-  50% { box-shadow: 0 0 0 6px var(--accent), 0 0 48px 14px rgba(255, 255, 255, 0.95); filter: brightness(1.12); }
-}
+@keyframes evolve { 0%, 100% { filter: none; transform: scale(1); } 50% { filter: brightness(1.3) saturate(1.2); transform: scale(1.05); } }
+@keyframes shine { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
 
-.bubble { grid-area: bubble; max-width: 720px; z-index: 2;
-  background: #fff; border-radius: 22px; padding: 14px 20px; box-shadow: 0 10px 30px rgba(30, 40, 60, 0.12); }
-.bubble b { color: var(--accent); font-size: 17px; }
-.bubble p { margin: 4px 0 0; font-size: clamp(20px, 2.6vw, 28px); line-height: 1.5; }
+/* Quiet hours: the whole picture dims and stars come out above the characters. */
+.night { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.8s ease;
+  background: linear-gradient(180deg, rgba(20, 26, 62, 0.52), rgba(12, 16, 42, 0.62)); }
+.night::before { content: ""; position: absolute; inset: 0;
+  background: radial-gradient(circle, #fff 0 1.4px, transparent 2px) 0 0 / 97px 83px,
+    radial-gradient(circle, rgba(255, 255, 255, 0.75) 0 1px, transparent 1.6px) 41px 29px / 131px 109px;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 46%); mask-image: linear-gradient(180deg, #000, transparent 46%); }
+body.quiet-time .night { opacity: 1; }
+
+/* bar ----------------------------------------------------------------------- */
+.bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 17px; }
+.when { display: flex; align-items: center; gap: 8px; }
+.when b { font-size: 19px; padding: 6px 14px; border-radius: 999px; }
+.tag { display: inline-block; padding: 4px 12px; border-radius: 999px; font-weight: 700; background: var(--accent); color: var(--accent-ink); }
+.tag.alarm { color: var(--ink); font-weight: 500; }
+.next { padding: 6px 14px; border-radius: 999px; color: var(--ink-2); flex: 1 1 200px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.next:empty { display: none; }
+.ghost { border: 1px solid var(--glass-line); background: var(--glass); border-radius: 999px; padding: 8px 16px; }
+.ghost.round { width: 64px; height: 64px; padding: 0; font-size: 17px; flex: none; }
+#swap { margin-left: auto; }
+
+/* bubble, panels, dock ------------------------------------------------------- */
+.bubble { border-radius: 22px; padding: 14px 20px; background: var(--glass-strong); }
+.bubble b { color: var(--accent); font-size: 16px; }
+.bubble p { margin: 4px 0 0; font-size: clamp(19px, 2.3vw, 26px); line-height: 1.5; }
 .bubble small { display: block; margin-top: 6px; color: var(--ink-2); font-size: 15px; }
-.pet figcaption { position: absolute; left: 8px; right: 8px; bottom: 10px; text-align: center; background: #fff;
-  border-radius: 14px; padding: 6px 10px; font-size: 17px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1); }
 
-/* dock -------------------------------------------------------------------- */
-.dock { display: grid; gap: 12px; align-content: start; min-height: 0; }
-.talk { display: flex; gap: 12px; align-items: center; justify-content: center; }
-.mic { flex: 1; max-width: 420px; height: 76px; border: 0; border-radius: 999px; background: var(--accent);
-  color: var(--accent-ink); font-size: 26px; font-weight: 700; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.15); }
-.mic.listening { background: #D9534F; animation: pulse 1.2s ease-in-out infinite; }
-.mic.busy { opacity: 0.6; }
-@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 83, 79, 0.45); } 50% { box-shadow: 0 0 0 16px rgba(217, 83, 79, 0); } }
-.type { display: flex; gap: 8px; }
-.type input { flex: 1; min-width: 0; font: inherit; font-size: 20px; padding: 10px 14px; border-radius: 14px; border: 1px solid var(--line); }
-.type button { border: 0; border-radius: 14px; padding: 0 18px; background: var(--accent); color: var(--accent-ink); font-size: 18px; }
-
-.panel { background: var(--card); border-radius: 20px; padding: 12px 16px; }
-.panel h2 { margin: 0 0 8px; font-size: 17px; color: var(--ink-2); font-weight: 600; }
+.panel { border-radius: 20px; padding: 12px 16px; }
+.panel h2 { margin: 0 0 8px; font-size: 16px; color: var(--ink-2); font-weight: 600; }
 .tasks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.tasks button { width: 100%; display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 10px;
-  text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; font-size: 19px; }
-.tasks .icon { font-size: 26px; text-align: center; }
-.tasks .time { font-size: 15px; color: var(--ink-2); }
-.tasks .st { font-size: 15px; font-weight: 700; white-space: nowrap; }
+.tasks button { width: 100%; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; text-align: left;
+  background: rgba(255, 255, 255, 0.62); border: 1px solid rgba(255, 255, 255, 0.75); border-radius: 14px; padding: 9px 12px; font-size: 18px; }
+.tasks .icon { font-size: 24px; text-align: center; }
+.tasks .time { font-size: 14px; color: var(--ink-2); }
+.tasks .st { font-size: 14px; font-weight: 700; white-space: nowrap; }
 .tasks .waiting .st { color: var(--wait); }
 .tasks .confirmed .st { color: var(--good); }
 .tasks .redo .st { color: var(--redo); }
 .tasks .confirmed, .tasks .waiting { opacity: 0.85; }
-.tasks .empty { color: var(--ink-2); font-size: 17px; }
+.tasks .empty { color: var(--ink-2); font-size: 16px; }
 
-.love-row { display: flex; align-items: center; gap: 8px; font-size: 18px; }
-.meter { height: 14px; border-radius: 999px; background: rgba(0, 0, 0, 0.08); overflow: hidden; margin: 8px 0 4px; }
+.love-row { display: flex; align-items: center; gap: 8px; font-size: 17px; }
+.love .tag { font-size: 13px; padding: 2px 10px; }
+.meter { height: 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.1); overflow: hidden; margin: 8px 0 4px; }
 .meter i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
-.love-text { font-size: 15px; color: var(--ink-2); }
+.love-text { font-size: 14px; color: var(--ink-2); }
+
+.talk { display: flex; gap: 12px; align-items: center; }
+.mic { flex: 1; height: 72px; border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+  font-size: 24px; font-weight: 700; box-shadow: 0 12px 26px rgba(0, 0, 0, 0.18); }
+.mic.listening { background: #D9534F; animation: pulse 1.2s ease-in-out infinite; }
+.mic.busy { opacity: 0.65; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 83, 79, 0.45); } 50% { box-shadow: 0 0 0 16px rgba(217, 83, 79, 0); } }
+.type { display: flex; gap: 8px; padding: 8px; border-radius: 18px; }
+.type input { flex: 1; min-width: 0; font: inherit; font-size: 19px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(255, 255, 255, 0.86); }
+.type button { border: 0; border-radius: 12px; padding: 0 18px; background: var(--accent); color: var(--accent-ink); font-size: 17px; }
+
+/* layout: landscape tablets ---------------------------------------------------- */
+@media (orientation: landscape) and (min-width: 720px) {
+  body { overflow: hidden; }
+  body::before { background: linear-gradient(90deg, var(--gc) 0%, var(--gc) 26%, var(--pc) 52%, var(--pc) 100%); }
+  #app { position: fixed; inset: 0; display: block; padding: 0; min-height: 0; }
+  .girl { position: absolute; left: -1vw; bottom: 0; height: min(100vh, 58vw); height: min(100dvh, 58vw); }
+  .girl .frame {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 82%, transparent), linear-gradient(180deg, transparent, #000 12%);
+    mask-image: linear-gradient(90deg, transparent, #000 15%, #000 82%, transparent), linear-gradient(180deg, transparent, #000 12%); }
+  .pet { position: absolute; bottom: 0; margin: 0; height: min(62vh, 36vw); height: min(62dvh, 36vw);
+    left: calc(min(100vh, 58vw) * 0.62); left: calc(min(100dvh, 58vw) * 0.62); }
+  .bar { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(2.2vw, env(safe-area-inset-left)); right: max(2.2vw, env(safe-area-inset-right)); }
+  .bubble { position: absolute; margin: 0; left: max(2.4vw, env(safe-area-inset-left)); bottom: max(3.5vh, env(safe-area-inset-bottom)); width: min(46vw, 660px); }
+  .side { position: absolute; right: max(2.4vw, env(safe-area-inset-right)); width: min(29vw, 420px);
+    top: calc(max(14px, env(safe-area-inset-top)) + 62px); bottom: calc(max(3.5vh, env(safe-area-inset-bottom)) + 96px); overflow-y: auto; }
+  .dock { position: absolute; right: max(2.4vw, env(safe-area-inset-right)); bottom: max(3.5vh, env(safe-area-inset-bottom)); width: min(29vw, 420px); }
+  .dock::before { display: none; }
+}
 
 /* sheets ------------------------------------------------------------------ */
-.sheet { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px;
-  background: rgba(20, 24, 32, 0.4); }
+.sheet { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px; background: rgba(20, 24, 32, 0.4); }
 .sheet-card { background: #fff; border-radius: 24px; padding: 20px 22px; width: min(480px, 100%); max-height: 92vh; overflow-y: auto; }
 .sheet-card.wide { width: min(920px, 100%); }
 .sheet-card h2 { margin: 6px 0 10px; font-size: 20px; }
 .sheet-card p { font-size: 22px; margin: 4px 0 16px; text-align: center; }
 .sheet-card .row { display: flex; gap: 12px; justify-content: center; }
 .sheet-card .row button:not(.ghost) { border: 0; border-radius: 999px; padding: 12px 28px; background: var(--accent); color: #fff; font-size: 20px; font-weight: 700; }
+.sheet-card .ghost { background: #f4f5f7; border-color: #e3e5ea; }
 .pick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 8px; }
 .pick button { border: 3px solid transparent; border-radius: 18px; padding: 0; background: #f4f5f7; overflow: hidden; display: grid; }
 .pick button[aria-pressed="true"] { border-color: var(--accent); }
@@ -169,5 +205,5 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .mic { height: 64px; font-size: 22px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .girl, .pet, .girl.talking, .pet.react, .pet.evolve .frame, .mic.listening { animation: none; }
+  .girl, .pet, .girl.talking, .pet.react, .pet.evolve .frame, .pet.evolve::before, .mic.listening { animation: none; }
 }

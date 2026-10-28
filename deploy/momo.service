@@ -13,7 +13,7 @@ ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
 Restart=always
 RestartSec=3
 
-# The app only needs to write its database.
+# The app only writes its database and the photos it keeps for a week (both in /var/lib/momo).
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

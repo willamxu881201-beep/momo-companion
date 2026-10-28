@@ -38,7 +38,12 @@ class HttpError extends Error {
   }
 }
 
-export function createHandler({ config, store, family, brain, auth, hub, webDir, tts = synthesizeStream, flashAsr = transcribeFlash, arkAsr = transcribe }) {
+const UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+
+export function createHandler({
+  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, webDir,
+  tts = synthesizeStream, flashAsr = transcribeFlash, arkAsr = transcribe,
+}) {
   // Speech is made once per (voice, line): the chat route starts it as soon as the
   // reply exists, and the tablet's /api/tts request joins the same clip and gets the
   // audio as it is made. Finished clips stay for repeats; failed ones are dropped.
@@ -76,7 +81,12 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
   // has it enabled, fall back to Ark and only try flash again every ten minutes.
   let flashOffUntil = 0;
   const routes = [];
-  const on = (method, path, access, fn) => routes.push({ method, path, access, fn });
+  // opts.limit: largest JSON body; opts.raw: take the body as bytes, up to that size.
+  const on = (method, path, access, fn, opts = {}) => routes.push({ method, path, access, fn, opts });
+  const need = (thing, what) => {
+    if (!thing) throw new HttpError(503, `${what}还没开通`);
+    return thing;
+  };
 
   // ---- public --------------------------------------------------------------
 
@@ -95,7 +105,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
   on('GET', '/api/state', 'kid', () => kidState());
 
   on('GET', '/api/events', 'kid', (ctx) => {
-    hub.attach(ctx.req, ctx.res);
+    hub.attach(ctx.req, ctx.res, () => post && post.offer({ fresh: true })); // Mom's words that are still waiting
     return undefined; // response stays open
   });
 
@@ -110,6 +120,33 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
     const r = await brain.reply(ctx.kid ? 'kid' : 'parent', ctx.body.text, { onEarly: speech });
     speech(r.reply);
     return { ...r, state: kidState() };
+  });
+
+  // A photo or file for the companion to read (from MoMo's page or Mom's). The body is
+  // the file itself; ?name= is its name. She acts on it and says what she did.
+  on('POST', '/api/upload', 'kid', async (ctx) => {
+    const mime = String(ctx.req.headers['content-type'] || '').split(';')[0].trim();
+    if (!UPLOAD_TYPES.has(mime)) throw new HttpError(415, '只能发照片（JPG、PNG）或 PDF');
+    if (ctx.body.length < 100) throw new HttpError(400, '文件是空的');
+    const who = ctx.kid ? 'kid' : 'mom';
+    const t0 = Date.now();
+    const r = await need(eyes, '看照片').take({ who, mime, name: ctx.url.searchParams.get('name') || '', buf: ctx.body });
+    console.log(`[eyes] ${who} sent ${mime} ${Math.round(ctx.body.length / 1024)} KB: ${r.kind}, ${r.changes.length} changes, ${Date.now() - t0} ms`);
+    speech(r.line);
+    return { ...r, state: kidState() };
+  }, { raw: 12_000_000 });
+
+  // The tablet's answer to a check-in: { image: JPEG base64, wav?: base64, error? }.
+  on('POST', '/api/checks/:id', 'kid', (ctx) => {
+    const r = need(eyes, '查看').answer(ctx.params.id, ctx.body);
+    if (!r.ok) throw new HttpError(404, '这次查看已经结束了');
+    return { ok: true };
+  }, { limit: 6_000_000 });
+
+  // The tablet has said one of Mom's messages out loud.
+  on('POST', '/api/messages/:id/heard', 'kid', (ctx) => {
+    need(post, '传话').heard(ctx.params.id);
+    return { ok: true };
   });
 
   on('POST', '/api/asr', 'kid', async (ctx) => {
@@ -198,6 +235,64 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
   });
 
   on('GET', '/api/parent/state', 'parent', () => parentState());
+
+  // Mom's page, live: the day's new events, check-in results, MoMo's messages.
+  on('GET', '/api/parent/events', 'parent', (ctx) => {
+    need(momHub, '妈妈页面的推送').attach(ctx.req, ctx.res);
+    return undefined;
+  });
+
+  // Mom talking with the companion.
+  on('POST', '/api/parent/chat', 'parent', async (ctx) => {
+    const today = family.now().date;
+    if (store.usage(today, 'momchat') >= config.limits.momChatPerDay) return { reply: '今天我们聊得太多啦，明天再说吧。', actions: [], limited: true };
+    store.addUsage(today, 'momchat');
+    const r = await brain.momReply(ctx.body.text);
+    speech(r.reply);
+    return r;
+  });
+
+  // Mom's buttons: look in on MoMo now; pass her a message.
+  on('POST', '/api/parent/check', 'parent', (ctx) => {
+    const r = need(eyes, '查看').check(String(ctx.body.what || 'look'));
+    speech(r.text);
+    return r;
+  });
+
+  on('POST', '/api/parent/tell', 'parent', (ctx) => {
+    const id = need(post, '传话').toKid(ctx.body.text);
+    if (!id) throw new HttpError(400, '要说的话是空的');
+    return { ok: true, id, tablets: hub.size, quiet: inQuiet(family.now().minutes, store.getSetting('quiet')) };
+  });
+
+  // The day's record (newest first), with MoMo's messages Mom hasn't seen yet.
+  on('GET', '/api/parent/feed', 'parent', (ctx) => {
+    const date = isDate(ctx.url.searchParams.get('date')) ? ctx.url.searchParams.get('date') : family.now().date;
+    const events = store.listEvents(date, 80).map((e) => ({
+      id: e.id, at: e.at, who: e.who, kind: e.kind, text: e.text, fileId: e.file_id,
+      undo: Boolean(e.data && (e.data.courses || (e.data.added && e.data.added.length)) && !e.data.undone),
+      undone: Boolean(e.data && e.data.undone),
+    }));
+    return { date, events, unread: post ? post.unreadForMom() : [] };
+  });
+
+  // A photo, for Mom's eyes only.
+  on('GET', '/api/parent/files/:id', 'parent', (ctx) => {
+    const f = need(files, '照片').read(Number(ctx.params.id));
+    if (!f) throw new HttpError(404, '照片已经过期删除了');
+    return { status: 200, type: f.file.mime, body: f.buf, private: true };
+  });
+
+  // Takes back what a photo changed: the old timetable, or the homework tasks it added.
+  on('POST', '/api/parent/undo/:id', 'parent', (ctx) => {
+    const e = store.getEvent(Number(ctx.params.id));
+    if (!e || !e.data || e.data.undone) throw new HttpError(404, '没有可以撤销的');
+    family.undo(e.data);
+    store.setEventData(e.id, { ...e.data, undone: true });
+    family.log('mom', 'undo', `妈妈撤销了：${e.text}`);
+    hub.send({ type: 'refresh' });
+    return parentState();
+  });
 
   on('POST', '/api/parent/cycle', 'parent', (ctx) => {
     const b = ctx.body;
@@ -361,7 +456,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
       pets: Object.fromEntries(Object.entries(PETS).map(([k, p]) => [k, { name: p.name, kind: p.kind }])),
       kidKey: auth.kidKey(),
       tablets: hub.size,
-      usage: { chat: store.usage(now.date, 'chat'), asr: store.usage(now.date, 'asr'), tts: store.usage(now.date, 'tts'), limits: config.limits },
+      usage: { chat: store.usage(now.date, 'chat'), asr: store.usage(now.date, 'asr'), tts: store.usage(now.date, 'tts'), vision: store.usage(now.date, 'vision'), momchat: store.usage(now.date, 'momchat'), limits: config.limits },
       tts: Boolean(config.ttsAppId),
     };
   }
@@ -464,7 +559,10 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
         ctx.kid = auth.isKid(cookies);
         if (!ctx.kid && !auth.isParent(cookies)) throw new HttpError(401, '这个链接已经失效，请向妈妈要新的链接');
       }
-      if (req.method === 'POST') ctx.body = await readJson(req, pathname === '/api/asr' ? 2_000_000 : 64_000);
+      if (req.method === 'POST') {
+        const o = m.route.opts;
+        ctx.body = o.raw ? await readRaw(req, o.raw) : await readJson(req, o.limit || (pathname === '/api/asr' ? 2_000_000 : 64_000));
+      }
 
       const out = await m.route.fn(ctx);
       if (out === undefined) return; // streaming response (SSE)
@@ -479,7 +577,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
         return;
       }
       if (out && out.status && (out.body || out.status === 204)) {
-        res.writeHead(out.status, out.body ? { 'Content-Type': out.type, 'Content-Length': out.body.length, 'Cache-Control': 'no-store' } : {});
+        res.writeHead(out.status, out.body ? { 'Content-Type': out.type, 'Content-Length': out.body.length, 'Cache-Control': out.private ? 'private, max-age=3600' : 'no-store' } : {});
         res.end(out.body);
         return;
       }
@@ -497,6 +595,22 @@ function sendJson(res, status, obj) {
   const body = Buffer.from(JSON.stringify(obj));
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
   res.end(body);
+}
+
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new HttpError(413, '文件太大了'));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 }
 
 function readJson(req, limit) {

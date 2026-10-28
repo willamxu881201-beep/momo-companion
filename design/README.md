@@ -29,20 +29,39 @@ python3 -m venv .venv && .venv/bin/pip install "rembg[cpu]"
 
 一段 5 秒的动画约 2 分半；24 段全部处理完约 1 小时。合成用的 WebGL 代码在 `homescreens.html` 末尾（搜索 `alphaSrc`）。
 
-## 全身像（现在上线的）
+## 全身像和循环动画（现在上线的）
 
-少女的全身像也是 Seedream 5.0 生成的：先拿 `web/img/girl_{a,b,c,d}.jpg` 当参考画全身站立像（1344×1792，纯色背景，头顶和脚下留白），再拿这张全身像当参考，各改出 3 张只动嘴或眼睛的（`m1` 说“哦”、`m2` 说“啊”、`blink` 闭眼）和 5 个姿势（开心、欢呼、思考、犯困、担心），一个少女 9 张，约 ¥0.3 一张。
-
-模型每次重画都会有细微差别，所以嘴型和眨眼不整张替换，而是只取变化的部分做成小贴片：
+少女的全身像是 Seedream 5.0 生成的：先拿 `web/img/girl_{a,b,c,d}.jpg` 当参考画全身站立像（1344×1792，纯色背景，头顶和脚下留白），再拿这张全身像当参考改出 5 个姿势（开心、欢呼、思考、犯困、担心），约 ¥0.3 一张。
 
 ```bash
-# raw/ 里放 fb_<g>.jpg（全身像）、<g>_m1.jpg、<g>_m2.jpg、<g>_blink.jpg、<g>_<姿势>.jpg
+# raw/ 里放 fb_<g>.jpg（全身像）、<g>_<姿势>.jpg（还有早先用的 <g>_m1/m2/blink.jpg）
 .venv/bin/python design/tools/full_body.py raw web/img/full 1440
 ```
 
-- 每张抠成透明 WebP（同 `cut_stills.py`），缩到 1440 高。
-- 嘴型贴片：找出嘴巴变化最大的位置，在它周围的椭圆里取“改过的图和原图的差别”，边缘羽化，不会带出整张图的细微偏差。
-- 眨眼贴片：闭眼时模型常把眉毛一起压低，所以贴片连眉毛一起取。
-- 位置写进 `sprites.json`：每个贴片放在哪，以及嘴、脸、身体、脚的位置。页面靠它对口型、放对话框、让宠物绕着脚走。
+每张抠成透明 WebP（同 `cut_stills.py`），位置写进 `sprites.json`：嘴、脸、身体、脚在哪儿。页面靠它放对话框、让宠物绕着脚走。（这个脚本还会做嘴型和眨眼的小贴片，那是改成动画以前用的，页面已经不用了。）
 
-宠物抠图直接用 `cut_stills.py`：`… cut_stills.py out 640 web/img/pet/*.jpg`，再按 `{宠物}_{阶段}[_happy|_sleepy].webp` 放进 `web/img/pet/sprite/`。
+### 少女的循环动画
+
+站着不动时和说话时各一段，用 Seedance 2.0 生成：首帧和尾帧都是全身像，5 秒，720p，约 ¥5 一段，4 个少女 8 段约 ¥40。提示词要她双脚站在原地、镜头固定、结尾回到开头的姿势。
+
+Seedance 的镜头还是会有一点漂，所以每段再处理一遍：
+
+```bash
+.venv/bin/pip install opencv-python-headless
+.venv/bin/python design/tools/full_loop.py raw/fb_b_talk.mp4 web/vid/full/b_talk.mp4 960
+```
+
+- 用她腰以下（腿、裙子、鞋，基本不动的地方）的特征点，算出每一帧相对第一帧的缩放和平移，平滑后抵消掉，脚就固定在同一个位置，身体自然的晃动和手势保留。
+- 每帧抠图、透明度在前后帧之间平滑（首尾相接）、边缘去色，输出"上半是画面、下半是透明度"的 H.264（720×1920），每段 1 MB 左右。页面里 `companion.js` 的 `AlphaLoop` 用 WebGL 把两半合成，安静和说话两段之间淡入淡出。
+- 一段 5 秒的动画处理约 3–6 分钟（4 核 CPU）。
+
+### 宠物走路
+
+会走路的 12 个形态（猫 1–2、麒麟 1–4、狐狸 1–4、龙 1–2）：先用 Seedream 拿宠物原图当参考，画侧身朝右、迈着步的样子（1792×1344），挑一张；再用 Seedance 2.0 生成原地走路的循环（镜头跟着它，480p，5 秒，约 ¥2.3 一段）。踩在祥云上的形态（猫 3–4、龙 3–4）不用走路动画，移动时轻轻飘着。
+
+```bash
+.venv/bin/python design/tools/full_loop.py raw/walk_3_1.mp4 web/vid/walk/3_1.mp4 420 pet   # 用头和身体对齐（腿在动）
+.venv/bin/python design/tools/walk_manifest.py web/vid/walk web/img/pet/sprite web/vid/walk/walks.json
+```
+
+`walks.json` 记着每段的宽高比、该画多大（走路的样子画成坐着时的九成高）、脚在哪儿，这样宠物从坐着变成走路时大小差不多、脚踩在同一个点上。

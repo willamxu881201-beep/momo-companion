@@ -2,166 +2,271 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MoMo 家长后台</title>
-<link rel="stylesheet" href="/parent.css">
-<script src="/parent.js" defer></script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#94b8c7">
+<title>MoMo 的伙伴 · 妈妈</title>
+<link rel="stylesheet" href="/kid.css">
+<link rel="stylesheet" href="/mom.css">
+<link rel="stylesheet" href="/admin.css">
+<script type="module" src="/mom.js"></script>
 </head>
-<body>
-<header class="top">
-  <h1>MoMo 家长后台</h1>
-  <button id="logout" class="link" type="button" hidden>退出</button>
-</header>
+<body data-girl="b" class="mom">
 
-<form id="login" class="card narrow" hidden>
-  <h2>登录</h2>
-  <label>家长密码 <input id="password" type="password" autocomplete="current-password" required></label>
-  <button type="submit">登录</button>
-  <p id="loginMsg" class="msg" role="status"></p>
-</form>
+<div id="login" class="cover" hidden>
+  <form id="loginForm" class="cover-card glass">
+    <h1>妈妈，欢迎回来</h1>
+    <p>输入家长密码，看看沫沫今天怎么样。</p>
+    <input id="password" type="password" autocomplete="current-password" required placeholder="家长密码" aria-label="家长密码">
+    <button type="submit" class="go">进入</button>
+    <p id="loginMsg" class="msg" role="status"></p>
+  </form>
+</div>
 
-<nav id="tabs" class="tabs" hidden>
-  <button type="button" data-tab="today" aria-selected="true">今天</button>
-  <button type="button" data-tab="timetable">课表</button>
-  <button type="button" data-tab="tasks">任务</button>
-  <button type="button" data-tab="companion">伙伴</button>
-  <button type="button" data-tab="tablet">平板</button>
-</nav>
+<div id="start" class="cover" hidden>
+  <button id="startBtn" class="start-btn" type="button">
+    <img id="startImg" alt="">
+    <span>点一下，叫醒伙伴</span>
+  </button>
+</div>
 
-<main id="main" hidden>
-  <section id="tab-today" class="tab">
-    <div class="card">
-      <h2>等你确认</h2>
-      <p class="hint">沫沫说做完的任务，你确认了才算数，好感度这时才会涨。</p>
-      <ul id="waiting" class="list"></ul>
+<main id="app" hidden>
+  <div class="stage" id="stage">
+    <div class="ground" aria-hidden="true"></div>
+    <figure class="girl" id="girlFig">
+      <div class="frame">
+        <img class="base" id="girlImg" alt="">
+        <canvas class="live" aria-hidden="true"></canvas>
+        <img class="pose" alt="" aria-hidden="true">
+      </div>
+      <div class="hit"></div>
+    </figure>
+    <figure class="pet" id="petFig">
+      <div class="shadow" aria-hidden="true"></div>
+      <div class="body"><div class="sprite"><img id="petImg" alt=""></div><canvas class="walk" aria-hidden="true"></canvas></div>
+      <figcaption id="petSay" class="glass" hidden></figcaption>
+    </figure>
+  </div>
+  <div class="night" aria-hidden="true"></div>
+
+  <header class="bar">
+    <div class="when"><b id="date" class="glass"></b><span id="dlabel" class="tag"></span></div>
+    <div id="next" class="next glass"></div>
+    <button id="adminBtn" class="ghost glass manage" type="button">管理</button>
+  </header>
+
+  <section id="bubble" class="bubble" aria-live="polite" hidden>
+    <div class="frost"></div>
+    <svg class="shape" aria-hidden="true"><path></path></svg>
+    <p id="say"></p>
+    <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+  </section>
+
+  <aside class="side">
+    <div id="chatPanel" class="panel glass" hidden>
+      <h2>刚才说的</h2>
+      <ul id="chat" class="chat" aria-live="polite"></ul>
     </div>
-    <div class="card">
+    <div class="panel glass">
       <h2>今天的任务</h2>
-      <ul id="todayTasks" class="list"></ul>
+      <ul id="tasks" class="tasks mom-tasks"></ul>
     </div>
-    <div class="card">
-      <h2>好感度</h2>
-      <p id="affinity" class="big"></p>
-      <ul id="ledger" class="list small"></ul>
-    </div>
-    <div class="card">
-      <h2>今天的用量</h2>
-      <p id="usage" class="hint"></p>
-    </div>
-  </section>
-
-  <section id="tab-timetable" class="tab" hidden>
-    <form id="cycleForm" class="card">
-      <h2>D1–D6 轮换</h2>
-      <p class="hint">告诉我一个确定的日子是 D 几，其余日子我按上学日往前往后推，跳过周末和假期。</p>
-      <div class="row">
-        <label>这一天 <input id="anchorDate" type="date" required></label>
-        <label>是 D <select id="anchorDay"></select></label>
-        <label>一轮几天 <input id="cycleLength" type="number" min="2" max="10" value="6"></label>
+    <div class="panel glass">
+      <h2 id="lookTitle">看看沫沫</h2>
+      <div class="quick">
+        <button type="button" data-check="look">👀 在做什么</button>
+        <button type="button" data-check="piano">🎹 在练琴吗</button>
+        <button type="button" data-check="posture">✍️ 看看坐姿</button>
+        <button type="button" id="tellBtn">💬 带句话</button>
       </div>
-      <fieldset id="weekdays" class="row"><legend>上学的日子</legend></fieldset>
-      <button type="submit">保存轮换</button>
+    </div>
+    <div class="panel glass">
+      <h2>今天的动态</h2>
+      <ul id="feed" class="feed"></ul>
+    </div>
+  </aside>
+
+  <div class="dock">
+    <p id="heard" class="heard glass" hidden></p>
+    <form id="typeForm" class="type glass" hidden>
+      <input id="typeText" maxlength="200" placeholder="问问伙伴，比如：沫沫今天作业写完了吗？" autocomplete="off">
+      <button type="submit">发送</button>
     </form>
-
-    <div class="card">
-      <h2>接下来 14 天</h2>
-      <p class="hint">学校临时调课或放假，在这里改那一天就行，后面的日子会自动顺延。</p>
-      <ul id="days" class="list"></ul>
+    <div class="talk">
+      <button id="mic" class="mic" type="button">按一下说话</button>
+      <button id="photoBtn" class="ghost glass round" type="button" aria-label="发照片或文件：课程表、作业">📷</button>
+      <button id="kbd" class="ghost glass round" type="button">打字</button>
+      <input id="photoInput" type="file" accept="image/*,application/pdf" hidden>
     </div>
-
-    <div class="card">
-      <h2>每天的课</h2>
-      <p class="hint">一行一节课，按顺序写。要带东西就在课名后加冒号，比如「体育：穿运动鞋」。</p>
-      <div id="courses" class="courses"></div>
-      <button id="saveCourses" type="button">保存课表</button>
-      <p id="coursesMsg" class="msg" role="status"></p>
-    </div>
-
-    <form id="holidayForm" class="card">
-      <h2>放长假</h2>
-      <div class="row">
-        <label>从 <input id="holFrom" type="date" required></label>
-        <label>到 <input id="holTo" type="date" required></label>
-        <label>名称 <input id="holNote" value="假期" maxlength="20"></label>
-      </div>
-      <button type="submit">设为假期</button>
-      <ul id="overrides" class="list small"></ul>
-    </form>
-  </section>
-
-  <section id="tab-tasks" class="tab" hidden>
-    <form id="tplForm" class="card">
-      <h2 id="tplTitle">新增每天的任务</h2>
-      <input id="tplId" type="hidden">
-      <div class="row">
-        <label class="icon">图标 <input id="tplIcon" maxlength="4" placeholder="📝"></label>
-        <label class="grow">名称 <input id="tplName" maxlength="20" required placeholder="写作业"></label>
-        <label>时间 <input id="tplTime" type="time"></label>
-        <label>大约几分钟 <input id="tplMinutes" type="number" min="5" max="240" value="30"></label>
-      </div>
-      <div class="row">
-        <label>哪些天
-          <select id="tplDays">
-            <option value="school">上学的日子</option>
-            <option value="offday">不上学的日子</option>
-            <option value="every">每天</option>
-            <option value="custom">自己选星期</option>
-          </select>
-        </label>
-        <fieldset id="tplWeekdays" class="row" hidden><legend>星期</legend></fieldset>
-        <label class="check"><input id="tplActive" type="checkbox" checked> 启用</label>
-      </div>
-      <div class="row">
-        <button type="submit">保存任务</button>
-        <button id="tplCancel" type="button" class="secondary" hidden>取消编辑</button>
-      </div>
-    </form>
-    <div class="card">
-      <h2>所有任务</h2>
-      <ul id="templates" class="list"></ul>
-    </div>
-  </section>
-
-  <section id="tab-companion" class="tab" hidden>
-    <form id="companionForm" class="card">
-      <h2>伙伴</h2>
-      <div class="row">
-        <label>孩子的名字 <input id="kidName" maxlength="12"></label>
-        <label>说话的伙伴 <select id="curGirl"></select></label>
-        <label>宠物 <select id="curPet"></select></label>
-      </div>
-      <fieldset id="hideGirls" class="row"><legend>不给沫沫选的少女</legend></fieldset>
-      <fieldset id="hidePets" class="row"><legend>不给沫沫选的宠物</legend></fieldset>
-      <div class="row">
-        <label>安静时间 从 <input id="quietStart" type="time"></label>
-        <label>到 <input id="quietEnd" type="time"></label>
-      </div>
-      <p class="hint">安静时间里不发任务提醒（闹钟照常响）。</p>
-      <fieldset id="voices" class="col"><legend>配音音色（豆包语音 2.0 的音色 ID）</legend></fieldset>
-      <p id="ttsNote" class="hint"></p>
-      <button type="submit">保存</button>
-      <p id="companionMsg" class="msg" role="status"></p>
-    </form>
-  </section>
-
-  <section id="tab-tablet" class="tab" hidden>
-    <div class="card">
-      <h2>孩子页面的链接</h2>
-      <p class="hint">在平板或手机上打开这个链接就能用，几台设备都行。这个链接就是钥匙，不要发到群里；万一发出去了，点「换一个新链接」，旧链接马上失效。</p>
-      <div class="pair">
-        <input id="kidUrl" readonly aria-label="孩子页面的链接">
-        <button id="kidCopy" type="button" class="secondary">复制</button>
-      </div>
-      <button id="kidRotate" type="button" class="secondary">换一个新链接</button>
-      <p id="kidMsg" class="msg" role="status"></p>
-    </div>
-    <div class="card">
-      <h2>在线情况</h2>
-      <p id="online" class="hint"></p>
-      <button id="testReminder" type="button" class="secondary">发一条测试提醒</button>
-      <p id="testMsg" class="msg" role="status"></p>
-    </div>
-  </section>
+  </div>
 </main>
+
+<div id="photo" class="sheet" hidden>
+  <div class="sheet-card wide photo-card" role="dialog" aria-label="照片">
+    <img id="photoImg" alt="">
+    <p id="photoText"></p>
+    <button id="photoClose" class="ghost" type="button">关闭</button>
+  </div>
+</div>
+
+<div id="tell" class="sheet" hidden>
+  <form id="tellForm" class="sheet-card" role="dialog" aria-label="给沫沫带句话">
+    <h2 id="tellTitle">想让伙伴告诉沫沫什么？</h2>
+    <textarea id="tellText" maxlength="120" rows="3" placeholder="比如：晚饭前把钢琴练了，妈妈七点到家"></textarea>
+    <div class="row">
+      <button type="submit">请伙伴转告</button>
+      <button id="tellCancel" class="ghost" type="button">算了</button>
+    </div>
+  </form>
+</div>
+
+<div id="admin" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-label="管理">
+    <div class="admin-top">
+      <h2>管理</h2>
+      <div class="row">
+        <button id="logout" class="link" type="button">退出登录</button>
+        <button id="adminClose" type="button">完成</button>
+      </div>
+    </div>
+    <nav id="tabs" class="tabs">
+      <button type="button" data-tab="timetable" aria-selected="true">课表</button>
+      <button type="button" data-tab="tasks">每天的任务</button>
+      <button type="button" data-tab="companion">伙伴</button>
+      <button type="button" data-tab="tablet">平板</button>
+      <button type="button" data-tab="today">好感度和用量</button>
+    </nav>
+
+    <section id="tab-timetable" class="tab">
+      <form id="cycleForm" class="card">
+        <h2>D1–D6 轮换</h2>
+        <p class="hint">告诉我一个确定的日子是 D 几，其余日子我按上学日往前往后推，跳过周末和假期。课程表也可以直接拍照发给伙伴。</p>
+        <div class="row">
+          <label>这一天 <input id="anchorDate" type="date" required></label>
+          <label>是 D <select id="anchorDay"></select></label>
+          <label>一轮几天 <input id="cycleLength" type="number" min="2" max="10" value="6"></label>
+        </div>
+        <fieldset id="weekdays" class="row"><legend>上学的日子</legend></fieldset>
+        <button type="submit">保存轮换</button>
+      </form>
+
+      <div class="card">
+        <h2>接下来 14 天</h2>
+        <p class="hint">学校临时调课或放假，在这里改那一天就行，后面的日子会自动顺延。</p>
+        <ul id="days" class="list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>每天的课</h2>
+        <p class="hint">一行一节课，按顺序写。要带东西就在课名后加冒号，比如「体育：穿运动鞋」。</p>
+        <div id="courses" class="courses"></div>
+        <button id="saveCourses" type="button">保存课表</button>
+        <p id="coursesMsg" class="msg" role="status"></p>
+      </div>
+
+      <form id="holidayForm" class="card">
+        <h2>放长假</h2>
+        <div class="row">
+          <label>从 <input id="holFrom" type="date" required></label>
+          <label>到 <input id="holTo" type="date" required></label>
+          <label>名称 <input id="holNote" value="假期" maxlength="20"></label>
+        </div>
+        <button type="submit">设为假期</button>
+        <ul id="overrides" class="list small"></ul>
+      </form>
+    </section>
+
+    <section id="tab-tasks" class="tab" hidden>
+      <form id="tplForm" class="card">
+        <h2 id="tplTitle">新增每天的任务</h2>
+        <input id="tplId" type="hidden">
+        <div class="row">
+          <label class="icon">图标 <input id="tplIcon" maxlength="4" placeholder="📝"></label>
+          <label class="grow">名称 <input id="tplName" maxlength="20" required placeholder="写作业"></label>
+          <label>时间 <input id="tplTime" type="time"></label>
+          <label>大约几分钟 <input id="tplMinutes" type="number" min="5" max="240" value="30"></label>
+        </div>
+        <div class="row">
+          <label>哪些天
+            <select id="tplDays">
+              <option value="school">上学的日子</option>
+              <option value="offday">不上学的日子</option>
+              <option value="every">每天</option>
+              <option value="custom">自己选星期</option>
+            </select>
+          </label>
+          <fieldset id="tplWeekdays" class="row" hidden><legend>星期</legend></fieldset>
+          <label class="check"><input id="tplActive" type="checkbox" checked> 启用</label>
+        </div>
+        <div class="row">
+          <button type="submit">保存任务</button>
+          <button id="tplCancel" type="button" class="secondary" hidden>取消编辑</button>
+        </div>
+      </form>
+      <div class="card">
+        <h2>所有每天的任务</h2>
+        <p class="hint">只做一次的任务和作业，直接跟伙伴说，或者把作业清单拍照发给她。</p>
+        <ul id="templates" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-companion" class="tab" hidden>
+      <form id="companionForm" class="card">
+        <h2>伙伴</h2>
+        <div class="row">
+          <label>孩子的名字 <input id="kidName" maxlength="12"></label>
+          <label>说话的伙伴 <select id="curGirl"></select></label>
+          <label>宠物 <select id="curPet"></select></label>
+        </div>
+        <fieldset id="hideGirls" class="row"><legend>不给沫沫选的少女</legend></fieldset>
+        <fieldset id="hidePets" class="row"><legend>不给沫沫选的宠物</legend></fieldset>
+        <div class="row">
+          <label>安静时间 从 <input id="quietStart" type="time"></label>
+          <label>到 <input id="quietEnd" type="time"></label>
+        </div>
+        <p class="hint">安静时间里不发任务提醒、不转告留言（闹钟照常响）。</p>
+        <fieldset id="voices" class="col"><legend>配音音色（豆包语音 2.0 的音色 ID）</legend></fieldset>
+        <p id="ttsNote" class="hint"></p>
+        <button type="submit">保存</button>
+        <p id="companionMsg" class="msg" role="status"></p>
+      </form>
+    </section>
+
+    <section id="tab-tablet" class="tab" hidden>
+      <div class="card">
+        <h2>孩子页面的链接</h2>
+        <p class="hint">在平板或手机上打开这个链接就能用，几台设备都行。这个链接就是钥匙，不要发到群里；万一发出去了，点「换一个新链接」，旧链接马上失效。</p>
+        <div class="pair">
+          <input id="kidUrl" readonly aria-label="孩子页面的链接">
+          <button id="kidCopy" type="button" class="secondary">复制</button>
+        </div>
+        <button id="kidRotate" type="button" class="secondary">换一个新链接</button>
+        <p id="kidMsg" class="msg" role="status"></p>
+      </div>
+      <div class="card">
+        <h2>在线情况</h2>
+        <p id="online" class="hint"></p>
+        <button id="testReminder" type="button" class="secondary">发一条测试提醒</button>
+        <p id="testMsg" class="msg" role="status"></p>
+      </div>
+      <div class="card">
+        <h2>照片</h2>
+        <p class="hint">发给伙伴的照片和平板拍的照片只存在自己的服务器上，7 天后自动删除；只有登录了家长密码才能看。平板拍照时，屏幕角上会显示摄像头画面，伙伴也会先说一声。</p>
+      </div>
+    </section>
+
+    <section id="tab-today" class="tab" hidden>
+      <div class="card">
+        <h2>好感度</h2>
+        <p id="affinity" class="big"></p>
+        <ul id="ledger" class="list small"></ul>
+      </div>
+      <div class="card">
+        <h2>今天的用量</h2>
+        <p id="usage" class="hint"></p>
+      </div>
+    </section>
+  </div>
+</div>
+
 </body>
 </html>

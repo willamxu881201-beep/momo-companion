@@ -1,6 +1,9 @@
 // SQLite storage (node:sqlite, no native modules). One file holds the family's
-// data: timetable, tasks, alarms, affinity ledger, settings. Nothing the
-// child says is stored here; chat history lives in memory only (see brain.js).
+// data: timetable, tasks, alarms, affinity ledger, settings, the day's events (what
+// happened, in a line each, for Mom), messages passed between Mom and MoMo, and the
+// list of photos kept for a few days (the pictures themselves are files, see
+// files.js). Nothing the child says to the companion is stored; chat history lives
+// in memory only (see brain.js).
 
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -52,7 +55,29 @@ CREATE TABLE IF NOT EXISTS usage (
   date TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (date, kind)
 );
+CREATE TABLE IF NOT EXISTS files (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL, who TEXT NOT NULL, kind TEXT NOT NULL,
+  mime TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', path TEXT NOT NULL, bytes INTEGER NOT NULL,
+  result TEXT, expires INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL, date TEXT NOT NULL, who TEXT NOT NULL, kind TEXT NOT NULL,
+  text TEXT NOT NULL, file_id INTEGER, data TEXT
+);
+CREATE INDEX IF NOT EXISTS events_date ON events (date, at);
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL, from_who TEXT NOT NULL, to_who TEXT NOT NULL,
+  text TEXT NOT NULL, delivered_at INTEGER
+);
 `;
+
+// Columns added after the first release, for databases made before them.
+const COLUMNS = {
+  task_instances: { note: "TEXT NOT NULL DEFAULT ''", source: 'TEXT' },
+};
 
 export const DEFAULT_SETTINGS = {
   cycle: { cycleLength: 6, anchorDate: null, anchorDay: null, schoolWeekdays: [1, 2, 3, 4, 5] },
@@ -68,6 +93,10 @@ export function openDb(file) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA);
+  for (const [table, cols] of Object.entries(COLUMNS)) {
+    const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+    for (const [name, type] of Object.entries(cols)) if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
   return new Store(db);
 }
 
@@ -219,6 +248,18 @@ export class Store {
     return this.db.prepare("SELECT * FROM task_instances WHERE status = 'waiting' ORDER BY date, time").all().map(plain);
   }
 
+  // A task for one day only (homework read off a photo, or one Mom asked for).
+  addOneOffTask(date, { title, icon = '', time = null, minutes = 30, note = '', source = null }) {
+    const r = this.db
+      .prepare('INSERT INTO task_instances (date, template_id, title, icon, time, minutes, note, source) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)')
+      .run(date, title, icon, time, minutes, note, source);
+    return Number(r.lastInsertRowid);
+  }
+
+  deleteTask(id) {
+    this.db.prepare('DELETE FROM task_instances WHERE id = ?').run(id);
+  }
+
   // ---- alarms ------------------------------------------------------------
 
   addAlarm(date, time, label) {
@@ -280,6 +321,80 @@ export class Store {
 
   removeParentSession(tokenHash) {
     this.db.prepare('DELETE FROM parent_sessions WHERE token_hash = ?').run(tokenHash);
+  }
+
+  // ---- photos and files ------------------------------------------------------
+
+  addFile({ who, kind, mime, name = '', path, bytes, expires }) {
+    const r = this.db
+      .prepare('INSERT INTO files (at, who, kind, mime, name, path, bytes, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Date.now(), who, kind, mime, name, path, bytes, expires);
+    return Number(r.lastInsertRowid);
+  }
+
+  getFile(id) {
+    const f = plain(this.db.prepare('SELECT * FROM files WHERE id = ?').get(id));
+    if (f && f.result) f.result = JSON.parse(f.result);
+    return f;
+  }
+
+  setFileResult(id, result) {
+    this.db.prepare('UPDATE files SET result = ? WHERE id = ?').run(JSON.stringify(result), id);
+  }
+
+  expiredFiles(now = Date.now()) {
+    return this.db.prepare('SELECT id, path FROM files WHERE expires < ?').all(now).map(plain);
+  }
+
+  deleteFile(id) {
+    this.db.prepare('DELETE FROM files WHERE id = ?').run(id);
+    this.db.prepare('UPDATE events SET file_id = NULL WHERE file_id = ?').run(id);
+  }
+
+  // ---- the day's events ------------------------------------------------------
+
+  addEvent({ date, who, kind, text, fileId = null, data = null }) {
+    const r = this.db
+      .prepare('INSERT INTO events (at, date, who, kind, text, file_id, data) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(Date.now(), date, who, kind, text, fileId, data === null ? null : JSON.stringify(data));
+    return Number(r.lastInsertRowid);
+  }
+
+  getEvent(id) {
+    const e = plain(this.db.prepare('SELECT * FROM events WHERE id = ?').get(id));
+    if (e && e.data) e.data = JSON.parse(e.data);
+    return e;
+  }
+
+  setEventData(id, data) {
+    this.db.prepare('UPDATE events SET data = ? WHERE id = ?').run(JSON.stringify(data), id);
+  }
+
+  listEvents(date, limit = 60) {
+    return this.db
+      .prepare('SELECT * FROM events WHERE date = ? ORDER BY at DESC, id DESC LIMIT ?')
+      .all(date, limit)
+      .map((e) => ({ ...e, data: e.data ? JSON.parse(e.data) : null }));
+  }
+
+  // ---- messages between Mom and MoMo ------------------------------------------
+
+  addMessage(from, to, text) {
+    const r = this.db.prepare('INSERT INTO messages (at, from_who, to_who, text) VALUES (?, ?, ?, ?)').run(Date.now(), from, to, text);
+    return Number(r.lastInsertRowid);
+  }
+
+  undelivered(to) {
+    return this.db.prepare('SELECT * FROM messages WHERE to_who = ? AND delivered_at IS NULL ORDER BY id').all(to).map(plain);
+  }
+
+  markDelivered(id) {
+    this.db.prepare('UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL').run(Date.now(), id);
+  }
+
+  // Messages to `to` that arrived since `since` (ms), newest last.
+  recentMessages(to, since) {
+    return this.db.prepare('SELECT * FROM messages WHERE to_who = ? AND at >= ? ORDER BY id').all(to, since).map(plain);
   }
 
   // ---- daily usage counters (cost guard) ---------------------------------

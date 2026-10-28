@@ -87,6 +87,7 @@ export class Family {
     const start = timeToMinutes(t.time);
     const onTime = start === null || now.minutes <= start + t.minutes + 15;
     this.store.setInstanceStatus(t.id, 'waiting', Date.now(), onTime);
+    this.log('kid', 'done', `${this.profile().kidName}说「${t.title}」做完了`);
     return { ok: true, task: this.store.getInstance(t.id) };
   }
 
@@ -96,9 +97,11 @@ export class Family {
     if (!t) return { ok: false };
     if (!approve) {
       this.store.setInstanceStatus(t.id, 'redo');
+      this.log('mom', 'review', `妈妈让「${t.title}」再做一下`);
       return { ok: true, task: this.store.getInstance(t.id), points: 0 };
     }
     this.store.setInstanceStatus(t.id, 'confirmed');
+    this.log('mom', 'review', `妈妈确认了「${t.title}」`);
     const ref = String(t.id);
     let points = 0;
     if (!this.store.hasAffinity(t.date, 'task', ref)) {
@@ -127,6 +130,58 @@ export class Family {
 
   cancelAlarms() {
     return { ok: true, cancelled: this.store.cancelAlarms() };
+  }
+
+  // A line in the day's record for Mom. who: kid | mom | tablet. onEvent (set by the
+  // server) lets Mom's page know.
+  log(who, kind, text, { fileId = null, data = null } = {}) {
+    const id = this.store.addEvent({ date: this.now().date, who, kind, text: String(text).slice(0, 200), fileId, data });
+    if (this.onEvent) this.onEvent(id);
+    return id;
+  }
+
+  // Homework read off a photo becomes today's tasks (tomorrow's, after 8 pm), unless the
+  // same title is already there. Returns the tasks added.
+  addHomework(items, { source = null } = {}) {
+    const now = this.now();
+    const date = now.minutes >= 20 * 60 ? addDays(now.date, 1) : now.date;
+    const have = new Set(this.tasks(date).map((t) => t.title));
+    const added = [];
+    for (const h of items) {
+      const title = String(h.subject && !h.title.startsWith(h.subject) ? `${h.subject}：${h.title}` : h.title).slice(0, 20);
+      if (!title || have.has(title)) continue;
+      have.add(title);
+      const note = [h.detail && h.detail !== h.title ? h.detail : '', h.due && h.due !== date ? `${dateZh(h.due)}交` : ''].filter(Boolean).join('，');
+      const id = this.store.addOneOffTask(date, { title, icon: '📝', minutes: Math.max(10, Number(h.minutes) || 20), note: note.slice(0, 80), source });
+      added.push(this.store.getInstance(id));
+    }
+    return { date, added };
+  }
+
+  // A timetable read off a photo replaces the courses for the days it shows (and the
+  // number of days in the rotation). The old ones are returned, for undo.
+  applyTimetable(tt) {
+    const before = { courses: this.store.getCourses(), cycleLength: this.store.getSetting('cycle').cycleLength };
+    const cycle = this.store.getSetting('cycle');
+    if (tt.cycle && tt.cycle !== cycle.cycleLength) {
+      this.store.setSetting('cycle', { ...cycle, cycleLength: tt.cycle, anchorDay: cycle.anchorDay && cycle.anchorDay <= tt.cycle ? cycle.anchorDay : null });
+    }
+    for (const d of tt.days) if (d.day <= tt.cycle) this.store.setCourses(d.day, d.courses);
+    return before;
+  }
+
+  // Puts back what a photo changed: the timetable as it was, or the tasks it added
+  // (those not yet started).
+  undo(data) {
+    if (data.courses) {
+      for (const day of Object.keys({ ...this.store.getCourses(), ...data.courses })) this.store.setCourses(Number(day), data.courses[day] || []);
+      const cycle = this.store.getSetting('cycle');
+      this.store.setSetting('cycle', { ...cycle, cycleLength: data.cycleLength || cycle.cycleLength });
+    }
+    for (const id of data.added || []) {
+      const t = this.store.getInstance(id);
+      if (t && t.status === 'todo') this.store.deleteTask(id);
+    }
   }
 
   // Called after each chat turn. Returns the points actually granted.
@@ -165,7 +220,7 @@ export class Family {
       lines.push(
         '今天的任务：' +
           snap.tasks
-            .map((t) => `[id=${t.id}] ${t.title}${t.time ? `（${t.time}，约 ${t.minutes} 分钟）` : ''}：${STATUS_ZH[t.status] || t.status}`)
+            .map((t) => `[id=${t.id}] ${t.title}${t.note ? `〔${t.note}〕` : ''}${t.time ? `（${t.time}，约 ${t.minutes} 分钟）` : ''}：${STATUS_ZH[t.status] || t.status}`)
             .join('；'),
       );
     } else {

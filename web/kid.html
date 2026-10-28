@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#94b8c7">
 <title>MoMo 的伙伴</title>
 <link rel="stylesheet" href="/kid.css">
-<script src="/kid.js" defer></script>
+<script type="module" src="/kid.js"></script>
 </head>
 <body data-girl="b">
 
@@ -30,16 +30,14 @@
     <figure class="girl" id="girlFig">
       <div class="frame">
         <img class="base" id="girlImg" alt="">
-        <img class="patch blink" alt="" aria-hidden="true">
-        <img class="patch m1" alt="" aria-hidden="true">
-        <img class="patch m2" alt="" aria-hidden="true">
+        <canvas class="live" aria-hidden="true"></canvas>
         <img class="pose" alt="" aria-hidden="true">
       </div>
       <div class="hit"></div>
     </figure>
     <figure class="pet" id="petFig">
       <div class="shadow" aria-hidden="true"></div>
-      <div class="body"><div class="sprite"><img id="petImg" alt=""></div></div>
+      <div class="body"><div class="sprite"><img id="petImg" alt=""></div><canvas class="walk" aria-hidden="true"></canvas></div>
       <figcaption id="petSay" class="glass" hidden></figcaption>
     </figure>
   </div>
@@ -78,10 +76,18 @@
     </form>
     <div class="talk">
       <button id="mic" class="mic" type="button">按一下说话</button>
+      <button id="photoBtn" class="ghost glass round" type="button" aria-label="拍照或发文件给伙伴看">📷</button>
       <button id="kbd" class="ghost glass round" type="button">打字</button>
+      <input id="photoInput" type="file" accept="image/*,application/pdf" hidden>
     </div>
   </div>
 </main>
+
+<!-- Shown whenever the camera is on (a check-in Mom asked for), with what it sees. -->
+<div id="camBox" class="cam glass" hidden aria-live="polite">
+  <video id="camView" playsinline muted></video>
+  <span>📷 在拍照</span>
+</div>
 
 <div id="picker" class="sheet" hidden>
   <div class="sheet-card wide" role="dialog" aria-label="换伙伴">

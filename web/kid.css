@@ -73,9 +73,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* characters ----------------------------------------------------------------
    Both stand on one stage, cut out of their pictures. The girl is in the middle, full
-   length, feet on the floor line; kid.js swaps her mouth and eyes for the voice and
-   blinks, or puts a whole pose over her. The pet is smaller and kid.js walks it
-   around her on an oval of floor: in front of her, beside her, or behind her. */
+   length, feet on the floor line; companion.js plays her looping videos on a canvas
+   (quiet, or talking while her voice plays) and puts a whole pose over her for moods.
+   The pet is smaller and companion.js walks it around her on an oval of floor: in
+   front of her, beside her, or behind her, with its walking loop while it moves. */
 .stage { position: relative; z-index: 1; min-width: 0; min-height: 0;
   --floor: 8%; /* room under her feet for the pet to pass in front */
   --girl-h: 88%; }
@@ -85,15 +86,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
   translate: -50% 0; margin: 0; pointer-events: none; }
 .girl .frame { position: absolute; inset: 0; transform-origin: 50% 97%;
   animation: breathe 4.2s ease-in-out infinite, var(--feel, none), var(--poke, none); }
+.girl.alive .frame { animation: var(--feel, none), var(--poke, none); } /* her loops breathe for her */
 .girl img, .pet img { position: absolute; display: block; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   -webkit-user-drag: none; pointer-events: none; }
-.girl .base, .girl .pose { inset: 0; width: 100%; height: 100%; }
-.girl .patch { opacity: 0; } /* placed over her face by kid.js, from sprites.json */
-.girl[data-mouth="1"] .m1, .girl[data-mouth="2"] .m2, .girl.blinking .blink { opacity: 1; }
+.girl .base, .girl .pose, .girl .live { inset: 0; width: 100%; height: 100%; }
+.girl .live { position: absolute; display: block; opacity: 0; transition: opacity 0.2s ease; }
+.girl.alive .live { opacity: 1; }
+.girl.alive .base { opacity: 0; transition: opacity 0.2s ease 0.15s; } /* the still goes once a frame is up */
 .girl .pose { opacity: 0; transition: opacity 0.16s ease; }
 .girl.posed .pose { opacity: 1; }
-.girl.posed .base, .girl.posed .patch { opacity: 0; transition: opacity 0.16s ease; }
-.girl .hit { position: absolute; pointer-events: auto; cursor: pointer; } /* her outline, placed by kid.js */
+.girl.posed .base, .girl.posed .live { opacity: 0; transition: opacity 0.16s ease; }
+.girl .hit { position: absolute; pointer-events: auto; cursor: pointer; } /* her outline, placed by companion.js */
 
 .pet { position: absolute; left: 0; top: 0; z-index: 3; margin: 0; width: 6rem; height: 8rem; transform-origin: 50% 100%;
   cursor: pointer; will-change: transform; }
@@ -101,7 +104,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: radial-gradient(closest-side, rgba(40, 30, 70, 0.26), rgba(40, 30, 70, 0)); }
 .pet .body { position: absolute; inset: 0; transform-origin: 50% 100%; }
 .pet .sprite { position: absolute; inset: 0; transform-origin: 50% 100%; }
-.pet .sprite img { inset: 0; width: 100%; height: 100%; }
+.pet .sprite img { inset: 0; width: 100%; height: 100%; transition: opacity 0.15s ease; }
+/* Its walking loop, placed by companion.js so its feet are on the pet's floor point. */
+.pet .walk { position: absolute; display: block; left: 0; bottom: 0; width: 0; height: 0; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
+.pet.walking .walk { opacity: 1; }
+.pet.walking .sprite img { opacity: 0; }
 /* What the pet is doing, just above its head and never much wider than it. */
 .pet figcaption { position: absolute; left: 50%; bottom: 96%; z-index: 2; translate: -50% 0;
   width: max-content; max-width: 220%; text-align: center; white-space: nowrap;
@@ -179,6 +186,7 @@ body.quiet-time .night { opacity: 1; }
 .bubble.pop { animation: pop 0.32s cubic-bezier(0.3, 1.4, 0.5, 1); }
 @keyframes pop { from { transform: scale(0.82); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
 .bubble.dim { opacity: 0.35; }
+.bubble.gone { opacity: 0; transition-duration: 0.45s; } /* fades a few seconds after she stops */
 
 /* What MoMo just said, by the mic. */
 .heard { margin: 0; justify-self: end; max-width: 100%; padding: 0.4rem 0.9rem; border-radius: 1.1rem 1.1rem 0.35rem 1.1rem;
@@ -288,6 +296,15 @@ body.quiet-time .night { opacity: 1; }
   .next, .love-text { display: none; }
   .stage { --girl-h: 90%; --floor: 7%; }
 }
+
+/* The camera at work (a check-in Mom asked for): a small live view in the top corner,
+   so it is never on without MoMo seeing it. A white flash when the photo is taken. */
+.cam { position: fixed; z-index: 35; top: max(0.8rem, env(safe-area-inset-top)); right: max(0.8rem, env(safe-area-inset-right));
+  display: grid; justify-items: center; gap: 0.3rem; padding: 0.45rem; border-radius: 1.1rem; background: var(--glass-strong); }
+.cam video { width: 8.5rem; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 0.8rem; transform: scaleX(-1); background: #223; }
+.cam span { font-size: 0.95rem; font-weight: 700; }
+.cam.flash { animation: cam-flash 0.5s ease-out; }
+@keyframes cam-flash { 0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); filter: brightness(1); } 20% { box-shadow: 0 0 0 100vmax rgba(255, 255, 255, 0.55); filter: brightness(1.8); } 100% { box-shadow: 0 0 0 100vmax rgba(255, 255, 255, 0); filter: brightness(1); } }
 
 /* sheets ------------------------------------------------------------------ */
 .sheet { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 1.2rem; background: rgba(20, 24, 32, 0.4); }

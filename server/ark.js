@@ -1,15 +1,17 @@
-// Volcengine Ark (方舟) chat completions. Used for both conversation and
-// speech recognition (the multimodal model accepts input_audio).
+// Volcengine Ark (方舟) chat completions. Used for conversation, speech recognition
+// (the multimodal model accepts input_audio) and reading pictures (image_url).
 
 import { request } from './client.js';
 
 export const ARK_ORIGIN = 'https://ark.cn-beijing.volces.com';
 const ARK_URL = `${ARK_ORIGIN}/api/v3/chat/completions`;
 
-export async function arkChat({ apiKey, model, messages, tools, maxTokens = 300, timeoutMs = 25000 }) {
+// json: ask for a JSON object back (the answer's content is then that JSON, as text).
+export async function arkChat({ apiKey, model, messages, tools, maxTokens = 300, timeoutMs = 25000, json = false }) {
   if (!apiKey) throw new Error('ARK_API_KEY is not set');
   const body = { model, messages, max_tokens: maxTokens, thinking: { type: 'disabled' } };
   if (tools?.length) body.tools = tools;
+  if (json) body.response_format = { type: 'json_object' };
   const res = await request(ARK_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },

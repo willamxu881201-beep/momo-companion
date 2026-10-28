@@ -1,5 +1,6 @@
-// Live push to the tablet (Server-Sent Events) and the minute-by-minute
-// scheduler that fires task reminders and alarms.
+// Live pushes (Server-Sent Events) to the tablet and to Mom's page, and the
+// minute-by-minute scheduler that fires task reminders and alarms, passes on Mom's
+// messages once the tablet is on, and clears out old photos.
 
 import { timeToMinutes } from './dates.js';
 
@@ -14,7 +15,8 @@ export class Hub {
     return this.clients.size;
   }
 
-  attach(req, res) {
+  // onOpen runs once the stream is open, e.g. to send what is waiting for this page.
+  attach(req, res, onOpen) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -24,6 +26,7 @@ export class Hub {
     res.write('retry: 5000\n\n');
     this.clients.add(res);
     req.on('close', () => this.clients.delete(res));
+    if (onOpen) onOpen();
   }
 
   write(chunk) {
@@ -52,9 +55,12 @@ export function inQuiet(minutes, quiet) {
 }
 
 export class Scheduler {
-  constructor(family, hub) {
+  // post and files are optional: messages to pass on, photos to clear out.
+  constructor(family, hub, { post = null, files = null } = {}) {
     this.family = family;
     this.hub = hub;
+    this.post = post;
+    this.files = files;
   }
 
   start(everyMs = 30000) {
@@ -67,6 +73,11 @@ export class Scheduler {
     try {
       this.checkAlarms();
       this.checkTasks();
+      if (this.post) this.post.offer();
+      if (this.files && Date.now() - (this.swept || 0) > 3600000) {
+        this.swept = Date.now();
+        this.files.sweep();
+      }
     } catch (err) {
       console.error('[scheduler]', err);
     }
@@ -83,7 +94,10 @@ export class Scheduler {
       const stale = a.date < now.date || now.minutes - at > 30;
       if (!stale && this.hub.size === 0) continue; // wait for the tablet to come back
       store.markAlarmFired(a.id);
-      if (!stale) this.hub.send({ type: 'alarm', alarm: a, line: ALARM(kidName, a.label) });
+      if (!stale) {
+        this.hub.send({ type: 'alarm', alarm: a, line: ALARM(kidName, a.label) });
+        this.family.log('tablet', 'alarm', `闹钟响了：${a.label}`);
+      }
     }
   }
 
@@ -99,6 +113,7 @@ export class Scheduler {
       if (t.reminded === 0 && now.minutes >= start && now.minutes < start + 10) {
         store.markReminded(t.id, 1);
         this.hub.send({ type: 'reminder', task: t, line: (REMIND[girl] || REMIND.b)(kidName, t.title) });
+        this.family.log('tablet', 'reminder', `提醒了${kidName}：${t.title}`);
       } else if (t.reminded === 1 && now.minutes >= start + 15 && now.minutes < start + 25) {
         store.markReminded(t.id, 2);
         this.hub.send({ type: 'reminder', task: t, line: NUDGE(kidName, t.title), gentle: true });

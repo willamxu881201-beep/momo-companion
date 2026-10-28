@@ -8,6 +8,9 @@ import { Family } from './family.js';
 import { Brain } from './brain.js';
 import { Auth } from './auth.js';
 import { Hub, Scheduler } from './events.js';
+import { Files } from './files.js';
+import { Eyes } from './eyes.js';
+import { Post } from './post.js';
 import { createHandler } from './http.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,10 +22,16 @@ const brain = new Brain(family, {
   personaModel: config.personaModel,
 });
 const auth = new Auth(store, { parentPassword: config.parentPassword });
-const hub = new Hub();
-new Scheduler(family, hub).start();
+const hub = new Hub(); // the tablet(s)
+const momHub = new Hub(); // Mom's page(s)
+const files = new Files(store, resolve(config.dataDir));
+const eyes = new Eyes({ family, store, files, hub, momHub, config });
+const post = new Post({ family, store, hub, momHub });
+brain.attach({ eyes, post, hub, momHub });
+family.onEvent = () => momHub.send({ type: 'event' }); // Mom's page refreshes its record
+new Scheduler(family, hub, { post, files }).start();
 
-const handler = createHandler({ config, store, family, brain, auth, hub, webDir: join(root, 'web') });
+const handler = createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, webDir: join(root, 'web') });
 const server = createServer(handler);
 server.requestTimeout = 60000;
 server.listen(config.port, config.host, () => {

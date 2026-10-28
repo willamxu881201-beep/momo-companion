@@ -1,0 +1,56 @@
+/* Mom's page: the companion's page (kid.css) with Mom's things in the side column. */
+
+/* Login: a frosted card like the rest. */
+.cover-card input { display: block; width: 100%; margin: 1rem 0 0.8rem; font: inherit; font-size: 1.15rem; padding: 0.7rem 0.9rem;
+  border-radius: 0.9rem; border: 1px solid rgba(0, 0, 0, 0.1); background: rgba(255, 255, 255, 0.85); }
+.cover-card .go { width: 100%; border: 0; border-radius: 999px; padding: 0.75rem; font-size: 1.2rem; font-weight: 700;
+  background: var(--accent); color: var(--accent-ink); }
+.cover-card .msg { margin-top: 0.6rem; min-height: 1.4em; font-size: 1rem; }
+
+.bar .manage { margin-left: auto; padding: 0.35rem 1rem; font-size: 1rem; flex: none; }
+
+/* What was just said, in full (the bubble shows the start of a long answer). */
+.chat { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; max-height: 15rem; overflow-y: auto; overscroll-behavior: contain; }
+.chat li { justify-self: start; max-width: 92%; padding: 0.45rem 0.8rem; border-radius: 1rem 1rem 1rem 0.3rem; font-size: 1rem; line-height: 1.55;
+  background: rgba(255, 255, 255, 0.72); overflow-wrap: anywhere; }
+.chat li.me { justify-self: end; border-radius: 1rem 1rem 0.3rem 1rem; background: var(--accent); color: var(--accent-ink); }
+
+/* Today's tasks: the waiting ones carry Mom's two buttons. */
+.mom-tasks li { background: rgba(255, 255, 255, 0.62); border: 1px solid rgba(255, 255, 255, 0.75); border-radius: 0.9rem; padding: 0.5rem 0.7rem; }
+.mom-tasks li.empty { background: none; border: 0; padding: 0; }
+.mom-tasks .row-task { display: grid; grid-template-columns: 1.8rem minmax(0, 1fr) auto; align-items: center; gap: 0.55rem; font-size: 1.05rem; }
+.mom-tasks .acts { display: flex; gap: 0.35rem; }
+.mom-tasks .acts button { border: 0; border-radius: 999px; padding: 0.3rem 0.75rem; font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
+.mom-tasks .acts .ok { background: var(--accent); color: var(--accent-ink); }
+.mom-tasks .acts .redo { background: rgba(255, 255, 255, 0.9); color: var(--ink-2); border: 1px solid rgba(0, 0, 0, 0.08); }
+.mom-tasks .waiting { opacity: 1; }
+
+/* Look in on MoMo. */
+.quick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+.quick button { border: 1px solid rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.62); border-radius: 0.9rem; padding: 0.6rem 0.5rem;
+  font-size: 1rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The day's record, newest first; photos as small thumbnails. */
+.feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
+.feed li { display: grid; grid-template-columns: 3rem minmax(0, 1fr) auto auto; align-items: center; gap: 0.5rem; font-size: 0.95rem; }
+.feed li.empty { display: block; color: var(--ink-2); }
+.feed li.undone .what { text-decoration: line-through; color: var(--ink-2); }
+.feed .when { color: var(--ink-2); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+.feed .what { overflow-wrap: anywhere; }
+.feed .thumb { border: 0; padding: 0; width: 3rem; height: 2.4rem; border-radius: 0.5rem; overflow: hidden; background: rgba(0, 0, 0, 0.06); }
+.feed .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.feed .undo { border: 1px solid rgba(0, 0, 0, 0.1); background: rgba(255, 255, 255, 0.85); border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.85rem; }
+
+/* A photo, big. */
+.photo-card { display: grid; gap: 0.6rem; justify-items: center; }
+.photo-card img { max-width: 100%; max-height: 70vh; border-radius: 1rem; display: block; }
+.photo-card p { font-size: 1rem; margin: 0; }
+
+/* Mom's message for MoMo. */
+#tellForm textarea { width: 100%; font: inherit; font-size: 1.1rem; padding: 0.7rem; border-radius: 0.9rem; border: 1px solid #e3e5ea; resize: vertical; }
+#tellForm .row { margin-top: 0.8rem; }
+
+/* The side column scrolls on its own when the day is long. */
+@media (orientation: landscape) and (min-width: 600px) {
+  .mom .side { overflow-y: auto; overscroll-behavior: contain; }
+}

@@ -1,0 +1,53 @@
+/* Mom's settings (the "管理" sheet on her page): plain forms, readable on a phone or an iPad.
+   Everything is scoped to #admin so it can't touch the companion's page around it. */
+#admin {
+  --bg: #F3F5F7; --card: #FFFFFF; --ink: #1F2A33; --ink-2: #5A6773; --line: #DCE2E7;
+  --accent: #2F6F8F; --accent-ink: #FFFFFF; --good: #2E8B57; --warn: #B7791F; --bad: #C0392B;
+  align-items: start; overflow-y: auto; font-size: 16px; line-height: 1.6;
+}
+#admin .sheet-card { width: min(60rem, 100%); max-height: none; margin: 0.5rem 0 2rem; display: grid; gap: 12px; background: var(--bg); }
+#admin .admin-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#admin .admin-top h2 { font-size: 20px; margin: 0; }
+#admin h2 { font-size: 18px; margin: 0 0 6px; text-align: left; }
+#admin p { font-size: 14px; text-align: left; margin: 0; }
+#admin .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 6px; }
+#admin .tabs button { flex: none; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 7px 16px; }
+#admin .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+#admin .tab { display: grid; gap: 14px; }
+#admin .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+#admin .hint { color: var(--ink-2); font-size: 14px; margin: 0; }
+#admin .msg { margin: 0; font-size: 14px; color: var(--ink-2); }
+#admin .big { font-size: 20px; margin: 0; }
+#admin .row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; border: 0; padding: 0; margin: 0; min-width: 0; justify-content: flex-start; }
+#admin .col { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; }
+#admin legend { font-size: 14px; color: var(--ink-2); padding: 0; margin-bottom: 4px; width: 100%; }
+#admin label { display: grid; gap: 4px; font-size: 14px; color: var(--ink-2); min-width: 0; }
+#admin label.grow { flex: 1 1 200px; }
+#admin label.icon input { width: 70px; }
+#admin label.check { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 15px; }
+#admin input, #admin select, #admin textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+#admin input[type="checkbox"] { width: 18px; height: 18px; padding: 0; }
+#admin textarea { width: 100%; min-height: 120px; resize: vertical; }
+#admin button { font: inherit; font-size: 15px; font-weight: 400; border: 0; border-radius: 10px; padding: 9px 16px; background: var(--accent); color: var(--accent-ink); cursor: pointer; justify-self: start; }
+#admin button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+#admin button.small { padding: 4px 10px; font-size: 14px; }
+#admin button.ok { background: var(--good); color: #fff; }
+#admin button.no { background: transparent; color: var(--bad); border: 1px solid var(--bad); }
+#admin button.link { background: none; color: var(--accent); padding: 4px 8px; }
+#admin button:focus-visible, #admin input:focus-visible, #admin select:focus-visible, #admin textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#admin .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#admin .list li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+#admin .list li .grow { flex: 1 1 200px; min-width: 0; }
+#admin .list.small li { padding: 4px 10px; font-size: 14px; }
+#admin .list .empty { color: var(--ink-2); border-style: dashed; }
+#admin .pill { font-size: 13px; padding: 1px 10px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+#admin .pill.todo { color: var(--ink-2); }
+#admin .pill.waiting { color: var(--warn); border-color: var(--warn); }
+#admin .pill.confirmed { color: var(--good); border-color: var(--good); }
+#admin .pill.redo, #admin .pill.off { color: var(--bad); border-color: var(--bad); }
+#admin .pill.set { color: var(--accent); border-color: var(--accent); }
+#admin .courses { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+#admin .courses .day { display: grid; gap: 6px; }
+#admin .pair { display: flex; gap: 8px; }
+#admin .pair input { flex: 1 1 0; width: 0; } /* width 0: the link is long and must not widen the card */
+#admin .pair button { flex: none; }

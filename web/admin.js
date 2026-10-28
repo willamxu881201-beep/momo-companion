@@ -1,11 +1,13 @@
-// Parent console.
-'use strict';
+// Mom's settings, in the "管理" sheet on her page: timetable and holidays, daily tasks,
+// companion and quiet hours, the kid link. renderAdmin(s) fills the forms from
+// /api/parent/state; the forms save straight away and hand the new state to onSaved.
 
-const $ = (id) => document.getElementById(id);
+import { $, api } from './companion.js';
+
 const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
-const STATUS = { todo: '还没做', waiting: '等你确认', confirmed: '已确认', redo: '要重做' };
 const REASON = { task: '完成任务', ontime: '按时完成', chat: '聊天', 'checkin-am': '早上打招呼', 'checkin-pm': '晚上打招呼' };
 let S = null;
+let onSaved = () => {};
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -18,25 +20,13 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
-async function api(path, body) {
-  const res = await fetch(path, body === undefined ? {} : {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && path !== '/api/parent/login') {
-    showLogin();
-    throw new Error(data.error || '请先登录');
-  }
-  if (!res.ok) throw new Error(data.error || '出错了');
-  return data;
-}
-
 async function act(path, body, msgEl) {
   try {
     const s = await api(path, body);
-    if (s && s.cycle) render(s);
+    if (s && s.cycle) {
+      render(s);
+      onSaved(s);
+    }
     if (msgEl) msgEl.textContent = '已保存';
     return s;
   } catch (err) {
@@ -53,26 +43,15 @@ function alertMsg(text) {
   setTimeout(() => el.remove(), 3500);
 }
 
-function showLogin() {
-  $('login').hidden = false;
-  $('tabs').hidden = true;
-  $('main').hidden = true;
-  $('logout').hidden = true;
-}
-
-async function load() {
-  try {
-    render(await api('/api/parent/state'));
-    $('login').hidden = true;
-    $('tabs').hidden = false;
-    $('main').hidden = false;
-    $('logout').hidden = false;
-  } catch {
-    /* login shown */
-  }
-}
-
 // ---- render -------------------------------------------------------------------
+
+export function initAdmin({ saved = () => {} } = {}) {
+  onSaved = saved;
+}
+
+export function renderAdmin(s) {
+  render(s);
+}
 
 function render(s) {
   S = s;
@@ -84,22 +63,6 @@ function render(s) {
 }
 
 function renderToday(s) {
-  const w = $('waiting');
-  w.replaceChildren(
-    ...(s.waiting.length
-      ? s.waiting.map((t) =>
-          h('li', {},
-            h('span', { class: 'grow' }, `${t.icon || ''} ${t.title}`, h('br'), h('small', { class: 'hint' }, `${t.date}${t.done_at ? ' · ' + new Date(t.done_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ' 说做完了' : ''}${t.on_time ? ' · 按时' : ''}`)),
-            h('button', { class: 'ok small', type: 'button', onclick: () => act('/api/parent/review', { id: t.id, approve: true }) }, '✓ 确认'),
-            h('button', { class: 'no small', type: 'button', onclick: () => act('/api/parent/review', { id: t.id, approve: false }) }, '↩ 没做完'),
-          ))
-      : [h('li', { class: 'empty' }, '暂时没有需要确认的')]),
-  );
-  $('todayTasks').replaceChildren(
-    ...(s.today.length
-      ? s.today.map((t) => h('li', {}, h('span', { class: 'grow' }, `${t.icon || ''} ${t.title}${t.time ? ' · ' + t.time : ''}`), h('span', { class: `pill ${t.status}` }, STATUS[t.status] || t.status)))
-      : [h('li', { class: 'empty' }, '今天没有任务。去「任务」里添加每天要做的事。')]),
-  );
   const a = s.affinity;
   const pet = s.pets[s.profile.pet];
   $('affinity').textContent = `${a.points} 点 · ${pet ? pet.name : ''}第 ${a.stage} 阶段` + (a.next ? `，再 ${a.next - a.points} 点进化` : '，已是最高阶段');
@@ -107,7 +70,7 @@ function renderToday(s) {
     ...s.ledger.slice(0, 10).map((l) => h('li', {}, h('span', { class: 'grow' }, `${l.date} ${REASON[l.reason] || l.reason}`), `+${l.delta}`)),
   );
   const u = s.usage;
-  $('usage').textContent = `对话 ${u.chat}/${u.limits.chatPerDay} 次 · 语音识别 ${u.asr}/${u.limits.asrPerDay} 次 · 配音 ${u.tts}/${u.limits.ttsCharsPerDay} 字`;
+  $('usage').textContent = `沫沫对话 ${u.chat}/${u.limits.chatPerDay} 次 · 妈妈对话 ${u.momchat || 0}/${u.limits.momChatPerDay || '-'} 次 · 语音识别 ${u.asr}/${u.limits.asrPerDay} 次 · 配音 ${u.tts}/${u.limits.ttsCharsPerDay} 字 · 看照片 ${u.vision || 0}/${u.limits.visionPerDay || '-'} 次`;
 }
 
 function renderTimetable(s) {
@@ -219,28 +182,11 @@ function renderTablets(s) {
 
 // ---- events -------------------------------------------------------------------
 
-$('login').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  $('loginMsg').textContent = '';
-  try {
-    await api('/api/parent/login', { password: $('password').value });
-    $('password').value = '';
-    load();
-  } catch (err) {
-    $('loginMsg').textContent = err.message;
-  }
-});
-
-$('logout').addEventListener('click', async () => {
-  await api('/api/parent/logout', {}).catch(() => {});
-  showLogin();
-});
-
 $('tabs').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-tab]');
   if (!b) return;
   for (const x of $('tabs').querySelectorAll('button')) x.setAttribute('aria-selected', String(x === b));
-  for (const t of document.querySelectorAll('.tab')) t.hidden = t.id !== `tab-${b.dataset.tab}`;
+  for (const t of document.querySelectorAll('#admin .tab')) t.hidden = t.id !== `tab-${b.dataset.tab}`;
 });
 
 $('cycleForm').addEventListener('submit', (e) => {
@@ -340,17 +286,9 @@ $('testReminder').addEventListener('click', async () => {
   }
 });
 
-// Background refresh only touches the read-only parts, never a form.
-async function refreshLive() {
-  try {
-    const s = await api('/api/parent/state');
-    S = s;
-    renderToday(s);
-    renderTablets(s);
-  } catch {
-    /* ignore */
-  }
+// A refresh from outside (Mom's page polls) only touches the read-only parts, never a form.
+export function refreshAdmin(s) {
+  S = s;
+  renderToday(s);
+  renderTablets(s);
 }
-
-load();
-setInterval(() => !$('main').hidden && document.visibilityState === 'visible' && refreshLive(), 30000);

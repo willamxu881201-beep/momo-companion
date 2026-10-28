@@ -39,6 +39,13 @@ id momo >/dev/null 2>&1 || useradd --system --home "$DATA_DIR" --shell /usr/sbin
 mkdir -p "$DATA_DIR" "$ENV_DIR"
 chown momo:momo "$DATA_DIR"
 chmod 700 "$DATA_DIR"
+# 读 PDF（比如课程表文件）要用 poppler 的 pdftoppm；拍照和截图用不到它。
+if ! command -v pdftoppm >/dev/null; then
+  echo "   安装 poppler-utils（读 PDF 用）"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get install -y -qq poppler-utils >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq poppler-utils >/dev/null 2>&1; } ||
+    echo "   没装上 poppler-utils：发 PDF 会读不了，拍照和截图不受影响"
+fi
 
 echo "== 2/5 配置文件 $ENV_FILE"
 if [ ! -f "$ENV_FILE" ]; then

@@ -15,6 +15,7 @@ export const config = {
   routerModel: env.ROUTER_MODEL || 'doubao-seed-2-1-lite-260915',
   personaModel: env.PERSONA_MODEL || 'doubao-seed-character-260628',
   asrModel: env.ASR_MODEL || 'doubao-seed-2-0-mini-260428',
+  visionModel: env.VISION_MODEL || 'doubao-seed-2-1-pro-260915', // reads photos, files and check-in snapshots
 
   ttsAppId: env.DOUBAO_APPID || '',
   ttsToken: env.DOUBAO_TOKEN || '',
@@ -23,5 +24,7 @@ export const config = {
     chatPerDay: num(env.CHAT_PER_DAY, 80),
     asrPerDay: num(env.ASR_PER_DAY, 150),
     ttsCharsPerDay: num(env.TTS_CHARS_PER_DAY, 20000),
+    visionPerDay: num(env.VISION_PER_DAY, 60), // photos, files and check-ins together
+    momChatPerDay: num(env.MOM_CHAT_PER_DAY, 80),
   },
 };

@@ -1,11 +1,14 @@
 // HTTP routes. No framework: a small table of (method, path) → handler.
 // Pages and assets are served from web/; everything else is JSON under /api.
 
-import { readFile, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
+import { pipeline } from 'node:stream';
 import { addDays, dateZh, isDate, timeToMinutes } from './dates.js';
 import { DEVICE_COOKIE, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
-import { GIRLS, PETS, STAGE_NAMES, STAGES } from './characters.js';
+import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
+import { inQuiet } from './events.js';
 import { synthesize, transcribe, wavRms, wavSeconds } from './speech.js';
 
 const TYPES = {
@@ -18,6 +21,7 @@ const TYPES = {
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
   '.ico': 'image/x-icon',
 };
 const PAGES = { '/': 'kid.html', '/parent': 'parent.html', '/pair': 'pair.html' };
@@ -195,9 +199,12 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
   });
 
   on('POST', '/api/parent/review', 'parent', (ctx) => {
-    const r = family.review(Number(ctx.body.id), Boolean(ctx.body.approve));
+    const approve = Boolean(ctx.body.approve);
+    const r = family.review(Number(ctx.body.id), approve);
     if (!r.ok) throw new HttpError(404, '找不到这件任务');
-    hub.send({ type: 'refresh' });
+    // The tablet cheers out loud, except at night when it only updates quietly.
+    const asleep = inQuiet(family.now().minutes, store.getSetting('quiet'));
+    hub.send(asleep ? { type: 'refresh' } : { type: 'reviewed', approve, title: r.task.title, points: r.points });
     return parentState();
   });
 
@@ -264,11 +271,16 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
       tomorrow: { ...s.tomorrow, dateZh: dateZh(s.tomorrow.date) },
       tasks: s.tasks.map(({ id, title, icon, time, minutes, status }) => ({ id, title, icon, time, minutes, status })),
       alarms: s.alarms.map(({ id, date, time, label }) => ({ id, date, time, label })),
-      affinity: { ...s.affinity, stageName: STAGE_NAMES[s.profile.pet]?.[s.affinity.stage - 1] },
+      affinity: {
+        ...s.affinity,
+        stageName: STAGE_NAMES[s.profile.pet]?.[s.affinity.stage - 1],
+        stageUp: STAGE_UP[s.profile.pet]?.[s.affinity.stage - 2] || null,
+      },
       profile: { kidName: s.profile.kidName, girl: s.profile.girl, pet: s.profile.pet },
       girls: Object.fromEntries(Object.entries(GIRLS).filter(([k]) => !hidden.girls.includes(k)).map(([k, g]) => [k, { name: g.name }])),
       pets: Object.fromEntries(Object.entries(PETS).filter(([k]) => !hidden.pets.includes(k)).map(([k, p]) => [k, { name: p.name, kind: p.kind, sound: p.sound, moves: p.moves }])),
       tts: Boolean(config.ttsAppId),
+      quiet: inQuiet(s.now.minutes, store.getSetting('quiet')),
     };
   }
 
@@ -321,28 +333,53 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     return null;
   }
 
-  async function serveStatic(res, pathname) {
+  async function serveStatic(req, res, pathname) {
     const rel = PAGES[pathname] || pathname.replace(/^\/+/, '');
     const file = normalize(join(webDir, rel));
     if (!file.startsWith(webDir + sep) || rel.includes('..')) return false;
+    let st;
     try {
-      const st = await stat(file);
-      if (!st.isFile()) return false;
-      const body = await readFile(file);
-      const type = TYPES[extname(file)] || 'application/octet-stream';
-      const headers = { 'Content-Type': type, 'Content-Length': body.length };
-      if (type.startsWith('text/html')) {
-        headers['Content-Security-Policy'] = CSP;
-        headers['Cache-Control'] = 'no-cache';
-      } else {
-        headers['Cache-Control'] = rel.startsWith('img/') ? 'public, max-age=604800' : 'no-cache';
-      }
-      res.writeHead(200, headers);
-      res.end(body);
-      return true;
+      st = await stat(file);
     } catch {
       return false;
     }
+    if (!st.isFile()) return false;
+    const type = TYPES[extname(file)] || 'application/octet-stream';
+    const headers = { 'Content-Type': type, 'Accept-Ranges': 'bytes' };
+    if (type.startsWith('text/html')) {
+      headers['Content-Security-Policy'] = CSP;
+      headers['Cache-Control'] = 'no-cache';
+    } else {
+      headers['Cache-Control'] = /^(img|vid)\//.test(rel) ? 'public, max-age=604800' : 'no-cache';
+    }
+    // Safari won't play a video unless it can fetch byte ranges of it.
+    let start = 0;
+    let end = st.size - 1;
+    let status = 200;
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    if (range && (range[1] || range[2])) {
+      if (range[1]) {
+        start = Number(range[1]);
+        if (range[2]) end = Math.min(Number(range[2]), end);
+      } else {
+        start = Math.max(0, st.size - Number(range[2]));
+      }
+      if (start > end) {
+        res.writeHead(416, { 'Content-Range': `bytes */${st.size}` });
+        res.end();
+        return true;
+      }
+      status = 206;
+      headers['Content-Range'] = `bytes ${start}-${end}/${st.size}`;
+    }
+    headers['Content-Length'] = end - start + 1;
+    res.writeHead(status, headers);
+    if (!st.size) {
+      res.end();
+      return true;
+    }
+    pipeline(createReadStream(file, { start, end }), res, () => {});
+    return true;
   }
 
   return async function handle(req, res) {
@@ -359,7 +396,7 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     try {
       const m = match(req.method, pathname);
       if (!m) {
-        if (req.method === 'GET' && (await serveStatic(res, pathname))) return;
+        if (req.method === 'GET' && (await serveStatic(req, res, pathname))) return;
         throw new HttpError(404, '没有这个页面');
       }
       const ctx = { req, res, url, params: m.params, cookies, secure, ip, body: {}, setCookie: (c) => pending.push(c) };

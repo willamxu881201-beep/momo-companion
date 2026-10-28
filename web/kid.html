@@ -38,9 +38,20 @@
       <p id="say"></p>
       <small id="heard" hidden></small>
     </div>
-    <figure class="girl" id="girlFig"><img id="girlImg" alt=""></figure>
+    <figure class="girl" id="girlFig">
+      <div class="frame">
+        <img class="base" id="girlImg" alt="">
+        <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
+        <video class="loop" data-loop="talk" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
+        <img class="expr" alt="" aria-hidden="true">
+      </div>
+    </figure>
     <figure class="pet" id="petFig">
-      <img id="petImg" alt="">
+      <div class="frame">
+        <img class="base" id="petImg" alt="">
+        <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
+        <img class="expr" alt="" aria-hidden="true">
+      </div>
       <figcaption id="petSay" hidden></figcaption>
     </figure>
   </section>

@@ -55,6 +55,14 @@ export const STAGE_LOOKS = {
   4: ['抱着珍珠的龙宝宝', '鹿角分叉、长出了龙须', '能腾云飞的小龙', '威风的青龙'],
 };
 
+// What the tablet says when the pet reaches stages 2, 3 and 4.
+export const STAGE_UP = {
+  1: ['身上的云纹亮起来啦', '脚下多了一朵小祥云', '披上祥云披风，变成守护灵猫啦'],
+  2: ['角变长了，鬃毛像火焰一样', '变成威风的少年麒麟啦', '变成金光闪闪的祥瑞神兽啦'],
+  3: ['长出了三条尾巴', '长出了六条尾巴', '九条尾巴全长齐啦，金光闪闪'],
+  4: ['鹿角分叉，还长出了龙须', '能腾云飞啦', '变成威风的青龙啦'],
+};
+
 export function stageFor(points) {
   let stage = 1;
   STAGES.forEach((min, i) => {

@@ -8,6 +8,8 @@ let busy = false;
 let audioCtx = null;
 let rec = null;
 let currentAudio = null;
+let speakSeq = 0;
+let evolved = null; // set when the pet reaches a new stage; the next say() announces it
 
 // ---- server ------------------------------------------------------------------
 
@@ -29,6 +31,7 @@ async function api(path, body) {
 async function load() {
   try {
     render(await api('/api/state'));
+    if (evolved && !look.speaking) say('');
   } catch (err) {
     if (err.message !== 'unpaired') console.warn(err);
   }
@@ -40,6 +43,150 @@ function showUnpaired() {
   $('app').hidden = true;
 }
 
+// ---- the two characters ------------------------------------------------------
+// Each is a stack of layers in one frame (see kid.css). show() asks for a loop,
+// a still, or a loop with a still standing in for it. A loop only lights once it
+// has really played, so the still underneath covers every failure: no H.264,
+// iOS Low Power Mode, slow Wi-Fi.
+
+const STILL_ONLY = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const EXPRESSIONS = ['happy', 'talk', 'think', 'sleepy', 'cheer', 'worried'];
+
+class Figure {
+  constructor(fig) {
+    this.fig = fig;
+    this.base = fig.querySelector('.base');
+    this.expr = fig.querySelector('.expr');
+    this.loops = {};
+    this.want = {};
+    this.seq = 0;
+    this.warmKey = '';
+    this.warm = [];
+    for (const v of fig.querySelectorAll('video')) {
+      v.muted = true; // iOS looks at the property, not only the attribute
+      v.addEventListener('playing', () => {
+        v.ok = true;
+        this.paint();
+      });
+      v.addEventListener('error', () => {
+        v.failed = true;
+        this.paint();
+      });
+      this.loops[v.dataset.loop] = v;
+    }
+  }
+
+  // The bottom still, the loops by name, and stills worth fetching ahead of time.
+  set(base, loops, extras) {
+    if (this.base.getAttribute('src') !== base) this.base.src = base;
+    for (const [name, v] of Object.entries(this.loops)) {
+      const src = STILL_ONLY ? null : loops[name] || null;
+      if (v.getAttribute('src') === src) continue;
+      v.ok = false;
+      v.failed = false;
+      if (src) v.src = src;
+      else {
+        v.removeAttribute('src');
+        v.load();
+      }
+    }
+    const key = extras.join('|');
+    if (key !== this.warmKey) {
+      this.warmKey = key;
+      this.warm = extras.map((src) => Object.assign(new Image(), { src }));
+    }
+  }
+
+  // { loop: 'idle' }, { img: url }, or both: the image stands in while the loop can't play.
+  show(want) {
+    this.want = want;
+    this.paint();
+  }
+
+  paint() {
+    const asked = this.want.loop ? this.loops[this.want.loop] : null;
+    const usable = asked && asked.getAttribute('src') && !asked.failed ? asked : null;
+    for (const v of Object.values(this.loops)) {
+      if (v === usable) {
+        if (v.paused) {
+          v.play().catch((err) => {
+            if (err && err.name === 'AbortError') return; // we paused it again before it started
+            v.failed = true;
+            this.paint();
+          });
+        }
+      } else if (!v.paused) v.pause();
+      v.classList.toggle('on', v === usable && v.ok === true);
+    }
+    const live = Boolean(usable && usable.ok);
+    this.fig.classList.toggle('live', live);
+    this.still(live ? null : this.want.img || null);
+  }
+
+  // The expression layer. A new picture is decoded first so it never fades in half-drawn.
+  async still(url) {
+    const seq = ++this.seq;
+    if (!url) {
+      this.expr.classList.remove('on');
+      return;
+    }
+    if (this.expr.getAttribute('src') !== url) {
+      this.expr.src = url;
+      try {
+        await this.expr.decode();
+      } catch {
+        return; // missing picture: leave whatever is under it
+      }
+      if (seq !== this.seq) return;
+    }
+    this.expr.classList.add('on');
+  }
+
+  // Called inside the start tap: a play() begun by a gesture unlocks the element
+  // for later, even where muted autoplay is otherwise blocked.
+  prime() {
+    for (const v of Object.values(this.loops)) {
+      if (!v.getAttribute('src')) continue;
+      v.failed = false;
+      v.play().then(() => this.paint(), () => {});
+    }
+  }
+}
+
+const girl = new Figure($('girlFig'));
+const pet = new Figure($('petFig'));
+const look = { speaking: false, thinking: false, mood: null, petMood: null };
+
+// Most important first: a passing mood, talking, thinking, asleep at night, idle.
+function pose() {
+  if (!state) return;
+  const face = (name) => `/img/expr/${state.profile.girl}_${name}.jpg`;
+  if (look.mood) girl.show({ img: face(look.mood) });
+  else if (look.speaking) girl.show({ loop: 'talk', img: face('talk') });
+  else if (look.thinking) girl.show({ img: face('think') });
+  else if (state.quiet) girl.show({ img: face('sleepy') });
+  else girl.show({ loop: 'idle' });
+  girl.fig.classList.toggle('talking', look.speaking);
+
+  const p = `/img/pet/${state.profile.pet}_${state.affinity.stage}`;
+  if (look.petMood) pet.show({ img: `${p}_${look.petMood}.jpg` });
+  else if (state.quiet) pet.show({ img: `${p}_sleepy.jpg` });
+  else pet.show({ loop: 'idle' });
+}
+
+// A passing expression: shown for a moment, then back to whatever comes next.
+function flash(key, name, ms) {
+  look[key] = name;
+  clearTimeout(flash[key]);
+  flash[key] = setTimeout(() => {
+    look[key] = null;
+    pose();
+  }, ms);
+  pose();
+}
+const mood = (name, ms = 2400) => flash('mood', name, ms);
+const petMood = (name, ms = 3000) => flash('petMood', name, ms);
+
 // ---- rendering ---------------------------------------------------------------
 
 const STATUS = { todo: '', redo: '再做一下', waiting: '⏳ 等妈妈看', confirmed: '✓ 完成' };
@@ -48,10 +195,13 @@ function render(s) {
   state = s;
   const g = s.profile.girl;
   const p = s.profile.pet;
+  const stage = s.affinity.stage;
   document.body.dataset.girl = g;
-  $('girlImg').src = `/img/girl_${g}.jpg`;
+  girl.set(`/img/girl_${g}.jpg`, { idle: `/vid/girl_${g}_idle.mp4`, talk: `/vid/girl_${g}_talk.mp4` },
+    EXPRESSIONS.map((n) => `/img/expr/${g}_${n}.jpg`));
+  pet.set(`/img/pet/${p}_${stage}.jpg`, { idle: `/vid/pet_${p}_${stage}.mp4` },
+    ['happy', 'sleepy'].map((n) => `/img/pet/${p}_${stage}_${n}.jpg`));
   $('girlImg').alt = s.girls[g] ? s.girls[g].name : '';
-  $('petImg').src = `/img/pet_${p}.jpg`;
   $('petImg').alt = s.pets[p] ? s.pets[p].name : '';
   $('startImg').src = `/img/girl_${g}.jpg`;
   $('who').textContent = s.girls[g] ? s.girls[g].name : '';
@@ -92,17 +242,44 @@ function render(s) {
     list.appendChild(li);
   }
 
-  const pet = s.pets[p] || { name: '' };
+  const petInfo = s.pets[p] || { name: '' };
   const af = s.affinity;
-  $('petName').textContent = pet.name;
+  $('petName').textContent = petInfo.name;
   $('stageName').textContent = af.stageName || `第 ${af.stage} 阶段`;
   const pct = af.next ? Math.round(((af.points - af.prev) / (af.next - af.prev)) * 100) : 100;
   $('meterFill').style.width = `${Math.max(3, Math.min(100, pct))}%`;
   $('loveText').textContent = af.next ? `好感度 ${af.points}，再攒 ${af.next - af.points} 点就进化` : `好感度 ${af.points}，已经是最厉害的样子啦`;
 
+  noteStage(s);
+  pose();
+
   if (!started) {
     $('unpaired').hidden = true;
     $('start').hidden = false;
+  }
+}
+
+// The last stage seen on this tablet, so each new one is announced once. Never
+// at night: growth that happens after bedtime is a surprise for the morning.
+function noteStage(s) {
+  if (!started || s.quiet) return;
+  const now = s.affinity.stage;
+  let seen = null;
+  try {
+    seen = Number(localStorage.getItem('momo.stage')) || null;
+  } catch {
+    return; // storage blocked: skip the announcement rather than repeat it
+  }
+  if (seen && now > seen) {
+    const p = s.pets[s.profile.pet];
+    evolved = `${p ? p.name : '宠物'}进化啦，${s.affinity.stageUp || `现在是第 ${now} 阶段`}！`;
+  }
+  if (seen !== now) {
+    try {
+      localStorage.setItem('momo.stage', String(now));
+    } catch {
+      /* private mode */
+    }
   }
 }
 
@@ -114,6 +291,18 @@ function toMin(hhmm) {
 // ---- speaking ----------------------------------------------------------------
 
 function say(text, petAction) {
+  if (evolved) {
+    text = `${text}哇！${evolved}`;
+    evolved = null;
+    petAction = petAction || '✨ 进化啦 ✨';
+    mood('cheer', 3000);
+    const fig = $('petFig');
+    fig.classList.remove('evolve');
+    void fig.offsetWidth;
+    fig.classList.add('evolve');
+    clearTimeout(say.evolveTimer);
+    say.evolveTimer = setTimeout(() => fig.classList.remove('evolve'), 4500);
+  }
   $('say').textContent = text;
   if (petAction) {
     $('petSay').textContent = petAction;
@@ -124,14 +313,22 @@ function say(text, petAction) {
     fig.classList.add('react');
     clearTimeout(say.petTimer);
     say.petTimer = setTimeout(() => ($('petSay').hidden = true), 6000);
+    petMood('happy');
   }
   return speak(text);
 }
 
 async function speak(text) {
   stopSpeaking();
-  const girl = $('girlFig');
-  girl.classList.add('talking');
+  const my = ++speakSeq;
+  const mine = () => my === speakSeq;
+  // Her mouth moves only while there is sound; until then she keeps her thinking face.
+  const mouth = (on) => {
+    if (!mine()) return;
+    look.speaking = on;
+    look.thinking = false;
+    pose();
+  };
   try {
     if (state && state.tts) {
       const res = await fetch('/api/tts', {
@@ -139,33 +336,35 @@ async function speak(text) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
+      if (!mine()) return; // a newer line took over while this one was fetched
       if (res.status === 200) {
         const url = URL.createObjectURL(await res.blob());
-        await playAudio(url);
+        if (mine()) await playAudio(url, () => mouth(true));
         URL.revokeObjectURL(url);
         return;
       }
     }
-    await browserSpeak(text);
+    await browserSpeak(text, () => mouth(true));
   } catch (err) {
     console.warn('speak failed', err);
   } finally {
-    girl.classList.remove('talking');
+    mouth(false);
   }
 }
 
-function playAudio(url) {
+function playAudio(url, onStart) {
   return new Promise((resolve) => {
     const a = new Audio(url);
     currentAudio = a;
-    a.onended = a.onerror = () => resolve();
+    a.onplaying = onStart;
+    a.onended = a.onerror = a.onpause = () => resolve();
     a.play().catch(() => resolve());
   });
 }
 
-function browserSpeak(text) {
+function browserSpeak(text, onStart) {
   return new Promise((resolve) => {
-    if (!('speechSynthesis' in window)) return resolve();
+    if (!text || !('speechSynthesis' in window)) return resolve();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'zh-CN';
     u.rate = 1.0;
@@ -173,16 +372,22 @@ function browserSpeak(text) {
     const voice = speechSynthesis.getVoices().find((v) => /zh[-_]CN/i.test(v.lang));
     if (voice) u.voice = voice;
     u.onend = u.onerror = () => resolve();
+    // Some tablets never report the end; don't let her mouth run forever.
+    setTimeout(resolve, 2000 + text.length * 350);
     speechSynthesis.speak(u);
+    onStart();
   });
 }
 
 function stopSpeaking() {
+  speakSeq += 1; // whatever line was in progress is no longer ours
+  look.speaking = false;
   if (currentAudio) {
     currentAudio.pause();
     currentAudio = null;
   }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
+  pose();
 }
 
 function chime() {
@@ -206,6 +411,7 @@ function chime() {
 
 async function send(text) {
   if (!text) return;
+  stopSpeaking();
   setBusy(true, '想一想…');
   $('heard').hidden = false;
   $('heard').textContent = `你说：${text}`;
@@ -216,15 +422,23 @@ async function send(text) {
     await say(r.reply, r.petAction);
   } catch (err) {
     setBusy(false);
-    if (err.message !== 'unpaired') await say('哎呀，网络有点慢，我们再试一次好吗？');
+    if (err.message !== 'unpaired') {
+      mood('worried');
+      await say('哎呀，网络有点慢，我们再试一次好吗？');
+    }
   }
 }
 
+// While busy she wears her thinking face; it clears when she next speaks.
 function setBusy(on, label) {
   busy = on;
   const mic = $('mic');
   mic.classList.toggle('busy', on);
   mic.textContent = on ? label : '按一下说话';
+  if (on) {
+    look.thinking = true;
+    pose();
+  }
 }
 
 // ---- listening (16 kHz mono WAV) ---------------------------------------------
@@ -236,6 +450,7 @@ async function startListening() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
   } catch {
     $('typeForm').hidden = false;
+    mood('worried');
     await say('我听不到声音，麦克风好像没打开。先打字跟我说吧。');
     return;
   }
@@ -283,10 +498,16 @@ async function stopListening() {
     const { text } = await api('/api/asr', { wav });
     setBusy(false);
     if (text) await send(text);
-    else await say('我没听清楚，可以再说一遍吗？');
+    else {
+      mood('worried');
+      await say('我没听清楚，可以再说一遍吗？');
+    }
   } catch (err) {
     setBusy(false);
-    if (err.message !== 'unpaired') await say('我没听清楚，可以再说一遍吗？');
+    if (err.message !== 'unpaired') {
+      mood('worried');
+      await say('我没听清楚，可以再说一遍吗？');
+    }
   }
 }
 
@@ -352,9 +573,11 @@ $('confirmYes').addEventListener('click', async () => {
   try {
     const r = await api(`/api/tasks/${t.id}/done`, {});
     render(r.state);
-    const pet = state.pets[state.profile.pet];
-    await say(`记下啦！等妈妈看过，好感度就会涨。`, pet ? `${pet.name}${pet.moves[0]}` : null);
+    const p = state.pets[state.profile.pet];
+    mood('happy');
+    await say(`记下啦！等妈妈看过，好感度就会涨。`, p ? `${p.name}${p.moves[0]}` : null);
   } catch (err) {
+    mood('worried');
     await say('哎呀，没记上，再点一次试试？');
   }
 });
@@ -371,7 +594,8 @@ function openPicker() {
       b.type = 'button';
       b.setAttribute('aria-pressed', String(k === current));
       b.innerHTML = '<img alt=""><span></span>';
-      b.querySelector('img').src = `/img/${kind}_${k}.jpg`;
+      // Every pet is shown at the stage MoMo has reached, which is how it would look if picked.
+      b.querySelector('img').src = kind === 'girl' ? `/img/girl_${k}.jpg` : `/img/pet/${k}_${state.affinity.stage}.jpg`;
       b.querySelector('span').textContent = v.name;
       b.addEventListener('click', () => choose(kind, k));
       box.appendChild(b);
@@ -387,12 +611,15 @@ async function choose(kind, key) {
     const r = await api('/api/profile', kind === 'girl' ? { girl: key } : { pet: key });
     render(r.state);
     openPicker();
-    if (kind === 'girl') say(`我是${state.girls[key].name}，以后我陪着你！`);
-    else {
+    if (kind === 'girl') {
+      mood('happy');
+      say(`我是${state.girls[key].name}，以后我陪着你！`);
+    } else {
       const p = state.pets[key];
       say(`${p.name}来啦！`, `${p.name}${p.moves[0]}`);
     }
   } catch (err) {
+    mood('worried');
     say('换不了这个伙伴，问问妈妈吧。');
   }
 }
@@ -412,13 +639,31 @@ function connectEvents() {
       return;
     }
     if (ev.type === 'refresh') return load();
+    if (ev.type === 'reviewed') return reviewed(ev);
     if (ev.type === 'alarm') await chime();
     if (ev.line) {
-      const pet = state && state.pets[state.profile.pet];
-      await say(ev.line, pet ? `${pet.name}${pet.moves[1] || pet.moves[0]}` : null);
+      const p = state && state.pets[state.profile.pet];
+      await say(ev.line, p ? `${p.name}${p.moves[1] || p.moves[0]}` : null);
     }
     load();
   };
+}
+
+// Mom just looked at a task on her phone.
+async function reviewed(ev) {
+  try {
+    render(await api('/api/state'));
+  } catch {
+    /* the line still makes sense without fresh numbers */
+  }
+  const p = state && state.pets[state.profile.pet];
+  if (ev.approve) {
+    mood('cheer', 3000);
+    await say(`妈妈看过「${ev.title}」啦，说你做得真棒！${ev.points ? `好感度加 ${ev.points}。` : ''}`, p ? `${p.name}${p.moves[0]}` : null);
+  } else {
+    mood('happy');
+    await say(`妈妈说「${ev.title}」还要再做一下。没关系，我陪着你，加油！`);
+  }
 }
 
 // ---- start -------------------------------------------------------------------
@@ -433,15 +678,19 @@ async function wakeLock() {
 
 $('startBtn').addEventListener('click', async () => {
   started = true;
+  $('start').hidden = true;
+  $('app').hidden = false;
+  girl.prime();
+  pet.prime();
   const Ctx = window.AudioContext || window.webkitAudioContext;
   audioCtx = new Ctx();
   await audioCtx.resume().catch(() => {});
   if ('speechSynthesis' in window) speechSynthesis.getVoices();
-  $('start').hidden = true;
-  $('app').hidden = false;
   wakeLock();
   connectEvents();
+  if (state) render(state); // someone is watching now, so a new pet stage can be announced
   const kid = state ? state.profile.kidName : '';
+  mood('happy', 2000);
   say(`${kid}，我在这儿呢！想问什么就按一下说话。`);
 });
 

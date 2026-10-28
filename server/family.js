@@ -96,15 +96,20 @@ export class Family {
     if (!t) return { ok: false };
     if (!approve) {
       this.store.setInstanceStatus(t.id, 'redo');
-      return { ok: true, task: this.store.getInstance(t.id) };
+      return { ok: true, task: this.store.getInstance(t.id), points: 0 };
     }
     this.store.setInstanceStatus(t.id, 'confirmed');
     const ref = String(t.id);
+    let points = 0;
     if (!this.store.hasAffinity(t.date, 'task', ref)) {
       this.store.addAffinity(t.date, POINTS.task, 'task', ref);
-      if (t.on_time) this.store.addAffinity(t.date, POINTS.ontime, 'ontime', ref);
+      points += POINTS.task;
+      if (t.on_time) {
+        this.store.addAffinity(t.date, POINTS.ontime, 'ontime', ref);
+        points += POINTS.ontime;
+      }
     }
-    return { ok: true, task: this.store.getInstance(t.id) };
+    return { ok: true, task: this.store.getInstance(t.id), points };
   }
 
   setAlarm(time, label, date) {

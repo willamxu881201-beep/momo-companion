@@ -236,7 +236,8 @@ class Pet {
     const cy = g.top - st.top + m.feet[1] * g.height;
     const bodyW = (m.bbox[2] - m.bbox[0]) * g.width;
     const rx = bodyW / 2 + petW * 0.5 + 4;
-    this.G = { cx, cy, rx, ry: rx * 0.22, petW, petH, minX: petW / 2 + 2, maxX: st.width - petW / 2 - 2 };
+    this.G = { cx, cy, rx, ry: rx * 0.22, petW, petH, minX: petW / 2 + 2, maxX: st.width - petW / 2 - 2,
+      gx: g.left - st.left, gy: g.top - st.top, gw: g.width, gh: g.height };
     this.fig.style.width = `${petW}px`;
     this.fig.style.height = `${petH}px`;
     this.place();
@@ -312,7 +313,7 @@ class Pet {
     this.place();
   }
 
-  // A one-off move on its picture: 'jump', or a lasting one: 'listen', 'tilt'.
+  // A one-off move on its picture: 'jump', or a lasting one: 'listen', 'tilt', 'peek'.
   act(cls, on = true) {
     if (cls === 'jump') {
       this.sprite.classList.remove('jump');
@@ -329,6 +330,7 @@ class Pet {
     this.stop();
     this.act('listen', false);
     this.act('tilt', false);
+    this.act('peek', false);
     return this.seq;
   }
 
@@ -399,19 +401,89 @@ class Pet {
     if (girlFree()) mood('happy', 1300);
   }
 
-  // Hide behind her, wait, pop out on the other side.
+  // How far her outline reaches to the left and right of her centre line, between two
+  // heights on the stage (the middle value over those rows), read off her picture
+  // itself, so it suits every girl. See-through parts such as a gauze hem don't count.
+  reach(y0, y1) {
+    const G = this.G;
+    const img = girlView.fig.querySelector('.base');
+    try {
+      if (!this.outline || this.outline.src !== img.currentSrc) {
+        if (!img.complete || !img.naturalWidth) throw new Error('not loaded yet');
+        const c = document.createElement('canvas');
+        c.width = 72;
+        c.height = 96;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        this.outline = { src: img.currentSrc, w: c.width, h: c.height, a: ctx.getImageData(0, 0, c.width, c.height).data };
+      }
+    } catch {
+      return [G.rx * 0.3, G.rx * 0.3]; // a fair guess until her picture is in
+    }
+    const O = this.outline;
+    const mid = ((G.cx - G.gx) / G.gw) * O.w;
+    const [r0, r1] = [y0, y1].map((y) => Math.max(0, Math.min(O.h - 1, Math.round(((y - G.gy) / G.gh) * O.h))));
+    const ls = [];
+    const rs = [];
+    for (let row = r0; row <= r1; row += 1) {
+      let l = 0;
+      let r = 0;
+      for (let col = 0; col < O.w; col += 1) {
+        if (O.a[(row * O.w + col) * 4 + 3] < 200) continue;
+        const d = col + 0.5 - mid;
+        if (d < 0) l = Math.max(l, -d);
+        else r = Math.max(r, d);
+      }
+      ls.push(l);
+      rs.push(r);
+    }
+    const middle = (v) => v.sort((p, q) => p - q)[v.length >> 1];
+    return [(middle(ls) / O.w) * G.gw, (middle(rs) / O.w) * G.gw];
+  }
+
+  // Behind her on side s (1 right, -1 left), most of it hidden by her: only its outer
+  // edge shows past her, and leaning out (.peek) brings its head into view.
+  peekSpot(s) {
+    const G = this.G;
+    const r0 = 0.75;
+    const y = G.cy - G.ry * r0 * 0.8; // behind her is a little further up the floor
+    const [l, r] = this.reach(y - G.petH * 0.9, y - G.petH * 0.15);
+    const dx = Math.max(G.petW * 0.12, (s > 0 ? r : l) - G.petW * 0.1);
+    const rr = Math.max(r0, dx / (G.rx * 0.9));
+    return [-Math.acos((s * dx) / (G.rx * rr)), rr];
+  }
+
+  // Hide and seek: behind her, a peek out past her legs, back in, maybe a peek on the
+  // other side, then out with a jump. She smiles when it pops out.
   async peek(seq) {
     const [x] = this.where();
-    const left = x < this.G.cx;
-    await this.go(-Math.PI / 2 + (left ? -0.2 : 0.2), 0.75, { speed: 1.4 });
+    const s = x < this.G.cx ? -1 : 1; // the side it went in on
+    await this.go(-Math.PI / 2 + s * 0.15, 0.75, { speed: 1.4 });
+    for (const side of Math.random() < 0.5 ? [s] : [s, -s]) {
+      if (seq !== this.seq) return;
+      await sleep(600 + Math.random() * 600);
+      if (seq !== this.seq) return;
+      const [a, r] = this.peekSpot(side);
+      await this.go(a, r, { speed: 0.9, hops: false });
+      if (seq !== this.seq) return;
+      this.face = side; // looking out, away from her
+      this.place();
+      this.act('peek');
+      await sleep(1800);
+      if (seq !== this.seq) return; // whatever took over has already reset its moves
+      this.act('peek', false);
+      await this.go(-Math.PI / 2 + side * 0.1, 0.75, { speed: 1.2, hops: false });
+    }
     if (seq !== this.seq) return;
-    await sleep(1400 + Math.random() * 1500);
+    await sleep(400 + Math.random() * 500);
     if (seq !== this.seq) return;
-    await this.go(left ? 0.12 : Math.PI - 0.12, 1.1, { speed: 2.4, dir: left ? 1 : -1 });
+    const out = Math.random() < 0.5 ? 1 : -1;
+    await this.go(out > 0 ? 0.12 : Math.PI - 0.12, 1.1, { speed: 2.4, dir: out });
     if (seq !== this.seq) return;
     this.faceHer();
     this.setMood('happy');
     this.act('jump');
+    if (girlFree()) mood('happy', 1300);
     await sleep(1300);
     if (seq === this.seq) this.setMood(null);
   }

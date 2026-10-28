@@ -18,8 +18,8 @@ export const SPEECH_ORIGIN = 'https://openspeech.bytedance.com';
 const TTS_URL = `${SPEECH_ORIGIN}/api/v3/tts/unidirectional`;
 const FLASH_URL = `${SPEECH_ORIGIN}/api/v3/auc/bigmodel/recognize/flash`;
 
-// Doubao's flash recogniser. Resolves the text, or throws an error whose `code`
-// is the service's status code (45000030 means the app hasn't enabled it).
+// Doubao's flash recogniser. Resolves the text ('' when there was no speech), or
+// throws an error carrying the service's status `code` and the HTTP `status`.
 export async function transcribeFlash({ appId, token, wav }) {
   const res = await request(FLASH_URL, {
     method: 'POST',
@@ -34,13 +34,21 @@ export async function transcribeFlash({ appId, token, wav }) {
     },
     body: JSON.stringify({ user: { uid: 'momo-tablet' }, audio: { data: wav.toString('base64'), format: 'wav' }, request: { model_name: 'bigmodel' } }),
   });
-  const code = Number(res.headers['x-api-status-code']);
+  return flashText(res);
+}
+
+// Reads the flash recogniser's answer. Its documented codes: 20000000 success,
+// 20000003 silence, 45000002 empty audio, 4500xxxx bad request, 550xxxxx service
+// trouble. 45000030, seen in practice, means the app hasn't been granted it.
+export function flashText({ status, headers, body }) {
+  const code = Number(headers['x-api-status-code']);
+  if (code === 20000003 || code === 45000002) return '';
   if (code !== 20000000) {
-    throw Object.assign(new Error(`flash ASR ${code || res.status}: ${String(res.headers['x-api-message'] || '').slice(0, 120)}`), { code });
+    throw Object.assign(new Error(`flash ASR ${code || status}: ${String(headers['x-api-message'] || '').slice(0, 120)}`), { code, status });
   }
   let text = '';
   try {
-    text = JSON.parse(res.body.toString('utf8')).result?.text || '';
+    text = JSON.parse(body.toString('utf8')).result?.text || '';
   } catch {
     /* empty */
   }

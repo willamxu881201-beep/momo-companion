@@ -38,7 +38,7 @@ class HttpError extends Error {
   }
 }
 
-export function createHandler({ config, store, family, brain, auth, hub, webDir, tts = synthesizeStream }) {
+export function createHandler({ config, store, family, brain, auth, hub, webDir, tts = synthesizeStream, flashAsr = transcribeFlash, arkAsr = transcribe }) {
   // Speech is made once per (voice, line): the chat route starts it as soon as the
   // reply exists, and the tablet's /api/tts request joins the same clip and gets the
   // audio as it is made. Finished clips stay for repeats; failed ones are dropped.
@@ -114,13 +114,15 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir,
     store.addUsage(today, 'asr');
     if (config.ttsAppId && Date.now() > flashOffUntil) {
       try {
-        return { text: await transcribeFlash({ appId: config.ttsAppId, token: config.ttsToken, wav }) };
+        return { text: await flashAsr({ appId: config.ttsAppId, token: config.ttsToken, wav }) };
       } catch (err) {
-        if (err.code) flashOffUntil = Date.now() + 10 * 60000; // refused, not a network hiccup
+        // Not granted, or the keys are refused: stop asking for a while. Anything else
+        // (busy, a network hiccup) only sends this one clip to Ark.
+        if (err.code === 45000030 || err.status === 401 || err.status === 403) flashOffUntil = Date.now() + 10 * 60000;
         console.warn('[asr] flash recogniser not used:', err.message);
       }
     }
-    const text = await transcribe({ apiKey: config.arkApiKey, model: config.asrModel, wavBase64: wav.toString('base64') });
+    const text = await arkAsr({ apiKey: config.arkApiKey, model: config.asrModel, wavBase64: wav.toString('base64') });
     return { text };
   });
 

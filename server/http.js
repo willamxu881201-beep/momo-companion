@@ -11,7 +11,7 @@ import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
 import { inQuiet } from './events.js';
 import { ARK_ORIGIN } from './ark.js';
 import { warm } from './client.js';
-import { SPEECH_ORIGIN, synthesize, transcribe, transcribeFlash, wavRms, wavSeconds } from './speech.js';
+import { Clip, PCM_RATE, SPEECH_ORIGIN, synthesizeStream, transcribe, transcribeFlash, wavRms, wavSeconds } from './speech.js';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -38,29 +38,32 @@ class HttpError extends Error {
   }
 }
 
-export function createHandler({ config, store, family, brain, auth, hub, webDir }) {
+export function createHandler({ config, store, family, brain, auth, hub, webDir, tts = synthesizeStream }) {
   // Speech is made once per (voice, line): the chat route starts it as soon as the
-  // reply exists, and the tablet's /api/tts request picks up the same promise.
-  const ttsCache = new Map();
+  // reply exists, and the tablet's /api/tts request joins the same clip and gets the
+  // audio as it is made. Finished clips stay for repeats; failed ones are dropped.
+  const clips = new Map();
   function speech(raw) {
     const text = String(raw || '').slice(0, 300);
     if (!text || !config.ttsAppId) return null;
     const speaker = family.profile().girlInfo.voice;
     const key = `${speaker}|${text}`;
-    let pending = ttsCache.get(key);
-    if (!pending) {
+    let clip = clips.get(key);
+    if (!clip) {
       const today = family.now().date;
       if (store.usage(today, 'tts') + text.length > config.limits.ttsCharsPerDay) return null;
       store.addUsage(today, 'tts', text.length);
-      pending = synthesize({ appId: config.ttsAppId, token: config.ttsToken, speaker, text }).catch((err) => {
-        console.error('[tts]', err.message);
-        return null;
-      });
-      pending.then((audio) => audio || ttsCache.delete(key));
-      ttsCache.set(key, pending);
-      if (ttsCache.size > 80) ttsCache.delete(ttsCache.keys().next().value);
+      clip = new Clip();
+      tts({ appId: config.ttsAppId, token: config.ttsToken, speaker, text, onAudio: (audio) => clip.add(audio) })
+        .catch((err) => {
+          console.error('[tts]', err.message);
+          clips.delete(key);
+        })
+        .finally(() => clip.end());
+      clips.set(key, clip);
+      if (clips.size > 40) clips.delete(clips.keys().next().value); // about 250 KB each
     }
-    return pending;
+    return clip;
   }
   // Doubao's flash recogniser is far faster from here than Ark. Until the speech app
   // has it enabled, fall back to Ark and only try flash again every ten minutes.
@@ -136,9 +139,15 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     return { ok: true };
   });
 
+  // The voice as it is made: PCM pieces, sent the moment they arrive. 204 means no
+  // voice for this line (none configured, over the daily limit, or the service
+  // failed), and the tablet uses its own.
   on('POST', '/api/tts', 'kid', async (ctx) => {
-    const audio = await speech(ctx.body.text);
-    return audio ? { status: 200, type: 'audio/mpeg', body: audio } : { status: 204 };
+    const clip = speech(ctx.body.text);
+    if (!clip) return { status: 204 };
+    await clip.started();
+    if (!clip.chunks.length) return { status: 204 };
+    return { status: 200, type: 'application/octet-stream', headers: { 'X-Audio-Format': `pcm_s16le;rate=${PCM_RATE}` }, stream: clip.read() };
   });
 
   on('POST', '/api/tasks/:id/done', 'kid', (ctx) => {
@@ -444,6 +453,15 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
       const out = await m.route.fn(ctx);
       if (out === undefined) return; // streaming response (SSE)
       if (pending.length) res.setHeader('Set-Cookie', pending);
+      if (out && out.stream) {
+        res.writeHead(out.status, { 'Content-Type': out.type, 'Cache-Control': 'no-store', ...out.headers });
+        for await (const piece of out.stream) {
+          if (res.destroyed) break; // the tablet stopped listening
+          res.write(piece);
+        }
+        res.end();
+        return;
+      }
       if (out && out.status && (out.body || out.status === 204)) {
         res.writeHead(out.status, out.body ? { 'Content-Type': out.type, 'Content-Length': out.body.length, 'Cache-Control': 'no-store' } : {});
         res.end(out.body);
@@ -453,7 +471,8 @@ export function createHandler({ config, store, family, brain, auth, hub, webDir 
     } catch (err) {
       const status = err.status || 500;
       if (status >= 500) console.error('[http]', req.method, pathname, err);
-      sendJson(res, status, { error: status >= 500 && !err.status ? '服务器出错了，请稍后再试' : err.message });
+      if (res.headersSent) res.destroy(); // a stream broke off midway
+      else sendJson(res, status, { error: status >= 500 && !err.status ? '服务器出错了，请稍后再试' : err.message });
     }
   };
 }

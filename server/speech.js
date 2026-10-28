@@ -4,12 +4,14 @@
 //    next to the server; when the speech app hasn't enabled it, we fall back to
 //    Ark's multimodal model in Beijing, about 2 s for a few seconds of speech
 //    (with BBR, see deploy/sysctl-momo.conf). Audio is never written to disk.
-//  - Speaking: Doubao TTS 2.0 (openspeech, v3 unidirectional API). If its
+//  - Speaking: Doubao TTS 2.0 (openspeech, v3 unidirectional API), streamed to
+//    the tablet as PCM while it is being made, so the voice starts about half a
+//    second after the reply instead of when the whole line is done. If its
 //    credentials are missing, the tablet falls back to the browser's voice.
 
 import { randomUUID } from 'node:crypto';
 import { arkChat } from './ark.js';
-import { request } from './client.js';
+import { request, stream } from './client.js';
 
 const ASR_PROMPT = '你是语音转写引擎。只输出音频里说话的原文，不回答、不解释、不评论、不翻译。听不清就输出空字符串。';
 export const SPEECH_ORIGIN = 'https://openspeech.bytedance.com';
@@ -90,10 +92,15 @@ export function cleanTranscript(s) {
     .trim();
 }
 
-// Returns an MP3 buffer, or null when TTS isn't configured or fails.
-export async function synthesize({ appId, token, speaker, text }) {
-  if (!appId || !token || !text) return null;
-  const res = await request(TTS_URL, {
+// The voice is raw 16-bit little-endian mono PCM at this rate, so the tablet can
+// start playing the first piece while the rest is still being made.
+export const PCM_RATE = 24000;
+
+// Doubao TTS 2.0 streams a line as JSON lines, each carrying a base64 piece of audio.
+// onAudio gets every piece as it arrives; the promise settles when the line is done.
+// Throws when the service refuses or sends no audio at all.
+export async function synthesizeStream({ appId, token, speaker, text, onAudio }) {
+  const res = await stream(TTS_URL, {
     method: 'POST',
     timeoutMs: 20000,
     headers: {
@@ -105,27 +112,78 @@ export async function synthesize({ appId, token, speaker, text }) {
     },
     body: JSON.stringify({
       user: { uid: 'momo-tablet' },
-      req_params: {
-        text,
-        speaker,
-        audio_params: { format: 'mp3', sample_rate: 24000 },
-      },
+      req_params: { text, speaker, audio_params: { format: 'pcm', sample_rate: PCM_RATE } },
     }),
   });
-  const body = res.body.toString('utf8');
-  if (res.status >= 400) throw new Error(`TTS HTTP ${res.status}: ${body.slice(0, 200)}`);
-  // The reply is a stream of JSON lines, each carrying a base64 audio chunk.
-  const chunks = [];
-  for (const line of body.split('\n')) {
-    const l = line.trim();
-    if (!l) continue;
+  res.setEncoding('utf8');
+  if (res.statusCode >= 400) {
+    let body = '';
+    for await (const c of res) body += c;
+    throw new Error(`TTS HTTP ${res.statusCode}: ${body.slice(0, 200)}`);
+  }
+  let got = 0;
+  const line = (l) => {
+    let j;
     try {
-      const j = JSON.parse(l);
-      if (j.data) chunks.push(Buffer.from(j.data, 'base64'));
-      else if (j.code && j.code !== 20000000 && j.code !== 0) throw new Error(`TTS code ${j.code}: ${j.message || ''}`);
-    } catch (err) {
-      if (err.message.startsWith('TTS code')) throw err;
+      j = JSON.parse(l);
+    } catch {
+      return; // blank or partial line
+    }
+    if (j.data) {
+      const audio = Buffer.from(j.data, 'base64');
+      got += audio.length;
+      onAudio(audio);
+    } else if (j.code && j.code !== 20000000) throw new Error(`TTS code ${j.code}: ${j.message || ''}`);
+  };
+  let rest = '';
+  for await (const chunk of res) {
+    const lines = (rest + chunk).split('\n');
+    rest = lines.pop();
+    lines.forEach(line);
+  }
+  line(rest);
+  if (!got) throw new Error('TTS sent no audio');
+}
+
+// One line of speech while it is being made: the audio so far, and a way to follow
+// it. Whoever asks for the line, early or late, gets all of it from the start.
+export class Clip {
+  constructor() {
+    this.chunks = [];
+    this.done = false;
+    this.waiting = [];
+  }
+
+  add(audio) {
+    this.chunks.push(audio);
+    this.wake();
+  }
+
+  end() {
+    this.done = true;
+    this.wake();
+  }
+
+  wake() {
+    const waiting = this.waiting;
+    this.waiting = [];
+    waiting.forEach((resolve) => resolve());
+  }
+
+  next() {
+    return new Promise((resolve) => this.waiting.push(resolve));
+  }
+
+  // Resolves once there is some audio, or the line is over without any.
+  async started() {
+    while (!this.chunks.length && !this.done) await this.next();
+  }
+
+  async *read() {
+    for (let i = 0; ; ) {
+      while (i < this.chunks.length) yield this.chunks[i++];
+      if (this.done) return;
+      await this.next();
     }
   }
-  return chunks.length ? Buffer.concat(chunks) : null;
 }

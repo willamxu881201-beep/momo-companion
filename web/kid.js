@@ -349,10 +349,12 @@ async function speak(text) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
-      if (!mine()) return; // a newer line took over while this one was fetched
+      if (!mine()) {
+        if (res.body) res.body.cancel().catch(() => {}); // a newer line took over meanwhile
+        return;
+      }
       if (res.status === 200) {
-        const bytes = await res.arrayBuffer();
-        if (mine()) await playClip(bytes, () => mouth(true));
+        await playVoice(res, mine, () => mouth(true));
         return;
       }
     }
@@ -386,37 +388,178 @@ for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown']) {
   document.addEventListener(type, unlockAudio, { passive: true, capture: true });
 }
 
-async function playClip(bytes, onStart) {
-  if (audioCtx) {
-    try {
-      if (audioCtx.state !== 'running') await audioCtx.resume();
-      const buffer = await audioCtx.decodeAudioData(bytes.slice(0));
-      if (audioCtx.state === 'running') {
-        await new Promise((resolve) => {
-          const src = audioCtx.createBufferSource();
-          src.buffer = buffer;
-          src.connect(audioCtx.destination);
-          src.onended = () => resolve();
-          currentAudio = {
-            stop() {
-              try {
-                src.stop();
-              } catch {
-                /* already stopped */
-              }
-              resolve();
-            },
-          };
-          src.start();
-          onStart();
-        });
-        return;
-      }
-    } catch (err) {
-      console.warn('web audio failed, trying <audio>', err);
-    }
+// The voice arrives as 16-bit PCM pieces while it is still being made, and she
+// starts talking with the first piece instead of waiting for the whole line.
+async function playVoice(res, mine, onStart) {
+  const rate = Number((/rate=(\d+)/.exec(res.headers.get('X-Audio-Format') || '') || [])[1]) || 24000;
+  if (audioCtx && audioCtx.state !== 'running') await audioCtx.resume().catch(() => {});
+  if (!audioCtx || audioCtx.state !== 'running' || !res.body || !res.body.getReader) {
+    const pcm = new Uint8Array(await res.arrayBuffer());
+    if (mine()) await playWav(pcm, rate, onStart);
+    return;
   }
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+  const player = new VoicePlayer(audioCtx, rate, onStart);
+  const reader = res.body.getReader();
+  currentAudio = {
+    stop() {
+      player.stop();
+      reader.cancel().catch(() => {});
+    },
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || !mine()) break;
+      player.push(value);
+    }
+  } catch (err) {
+    console.warn('the voice broke off', err); // play what did arrive
+  }
+  await player.finish();
+}
+
+// Queues PCM pieces back to back on a Web Audio context. Each piece is resampled to
+// the context's own rate, carrying the position across pieces, so every buffer is a
+// whole number of frames and starts exactly where the last one ended: no seams.
+class VoicePlayer {
+  constructor(ctx, rate, onStart) {
+    this.ctx = ctx;
+    this.step = rate / ctx.sampleRate; // input samples per output frame
+    this.input = new Float32Array(0); // decoded samples not yet resampled
+    this.pos = 0; // where the next output frame falls in `input`
+    this.odd = null; // a byte left over when a piece split a sample in two
+    this.held = []; // the first audio, held until there is enough to start smoothly
+    this.heldFrames = 0;
+    this.at = 0; // when the next buffer starts, in context time
+    this.started = false;
+    this.done = false;
+    this.stopped = false;
+    this.sources = new Set();
+    this.onStart = onStart;
+    this.ended = null;
+  }
+
+  push(bytes) {
+    if (this.stopped || !bytes.length) return;
+    let b = bytes;
+    if (this.odd !== null) {
+      b = new Uint8Array(bytes.length + 1);
+      b[0] = this.odd;
+      b.set(bytes, 1);
+      this.odd = null;
+    }
+    if (b.length % 2) {
+      this.odd = b[b.length - 1];
+      b = b.subarray(0, b.length - 1);
+    }
+    const keep = Math.min(Math.floor(this.pos), this.input.length);
+    const input = new Float32Array(this.input.length - keep + b.length / 2);
+    input.set(this.input.subarray(keep));
+    const view = new DataView(b.buffer, b.byteOffset, b.length);
+    for (let i = 0, j = this.input.length - keep; i < b.length; i += 2, j += 1) input[j] = view.getInt16(i, true) / 32768;
+    this.input = input;
+    this.pos -= keep;
+    this.render(false);
+  }
+
+  // Resample what can be resampled now; at the end, the last sample too.
+  render(last) {
+    const { input, step } = this;
+    const out = new Float32Array(Math.max(0, Math.ceil((input.length - this.pos) / step)) + 1);
+    let n = 0;
+    while (this.pos + 1 < input.length || (last && this.pos < input.length)) {
+      const i = Math.floor(this.pos);
+      const f = this.pos - i;
+      out[n++] = i + 1 < input.length ? input[i] + (input[i + 1] - input[i]) * f : input[i];
+      this.pos += step;
+    }
+    if (n || last) this.queue(out.subarray(0, n), last);
+  }
+
+  queue(frames, last) {
+    if (frames.length) {
+      this.held.push(frames);
+      this.heldFrames += frames.length;
+    }
+    const ctx = this.ctx;
+    if (!this.started) {
+      // Wait for a quarter second of sound (or the whole line, if shorter) before starting.
+      if (this.heldFrames < ctx.sampleRate * 0.25 && !last) return;
+      if (!this.heldFrames) return;
+      this.started = true;
+      this.at = ctx.currentTime + 0.05;
+      this.startTimer = setTimeout(this.onStart, 50);
+    }
+    if (!this.heldFrames) return;
+    const all = new Float32Array(this.heldFrames);
+    let o = 0;
+    for (const h of this.held) {
+      all.set(h, o);
+      o += h.length;
+    }
+    this.held = [];
+    this.heldFrames = 0;
+    if (this.at < ctx.currentTime + 0.01) this.at = ctx.currentTime + 0.03; // ran dry: go on after a short gap
+    const buffer = ctx.createBuffer(1, all.length, ctx.sampleRate);
+    buffer.getChannelData(0).set(all);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    src.onended = () => {
+      this.sources.delete(src);
+      if (this.done && !this.sources.size && this.ended) this.ended();
+    };
+    src.start(this.at);
+    this.sources.add(src);
+    this.at += all.length / ctx.sampleRate;
+  }
+
+  // Resolves when the last of the line has been heard (or right away if stopped).
+  finish() {
+    if (!this.stopped) {
+      if (this.odd !== null) this.push(new Uint8Array([0]));
+      this.render(true);
+    }
+    this.done = true;
+    return new Promise((resolve) => {
+      this.ended = resolve;
+      if (this.stopped || !this.sources.size) resolve();
+    });
+  }
+
+  stop() {
+    this.stopped = true;
+    clearTimeout(this.startTimer);
+    for (const src of this.sources) {
+      try {
+        src.stop();
+      } catch {
+        /* not started yet or already over */
+      }
+    }
+    this.sources.clear();
+    if (this.ended) this.ended();
+  }
+}
+
+// Without Web Audio: the whole line as a WAV file through an <audio> element.
+async function playWav(pcm, rate, onStart) {
+  const header = new DataView(new ArrayBuffer(44));
+  const text = (at, s) => [...s].forEach((c, i) => header.setUint8(at + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  header.setUint32(4, 36 + pcm.length, true);
+  text(8, 'WAVE');
+  text(12, 'fmt ');
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, rate, true);
+  header.setUint32(28, rate * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  text(36, 'data');
+  header.setUint32(40, pcm.length, true);
+  const url = URL.createObjectURL(new Blob([header.buffer, pcm], { type: 'audio/wav' }));
   try {
     await new Promise((resolve) => {
       const a = new Audio(url);

@@ -1,7 +1,7 @@
-/* Kid page, design A (晕染). The companion and the pet keep the soft colour they were
-   painted on, and that colour spreads over the whole screen: the girl's on her side, the
-   pet's on its side, meeting in a gradient. Nothing sits in a box; panels are frosted
-   glass. kid.js sets --gc and --pc from the characters on screen.
+/* Kid page, design A (晕染). The soft colours the companion and the pet were painted on
+   spread over the whole screen: the girl's on her side, the pet's on its side, meeting
+   in a gradient, and the two stand on it cut out. Nothing sits in a box; panels are
+   frosted glass. kid.js sets --gc and --pc from the characters on screen.
 
    One layout system for every screen. Sizes come from rem, and the root size follows
    the screen's short side, so a phone, a foldable and a 13-inch tablet keep the same
@@ -72,48 +72,57 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: 0.8rem 2rem; border-radius: 999px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18); }
 
 /* characters ----------------------------------------------------------------
-   Each is a stack in one frame: the still underneath, looping videos over it, an
-   expression still on top; kid.js lights one upper layer at a time. The frame's edges
-   fade into the colour around it. */
-.girl, .pet { margin: 0; position: relative; min-width: 0; aspect-ratio: 3 / 4; cursor: pointer; }
-.pet { z-index: 1; }
-.frame { position: absolute; inset: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-.frame > img, .frame > video { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
-  object-fit: cover; object-position: 50% 15%; pointer-events: none; }
-.frame > .loop, .frame > .expr { opacity: 0; transition: opacity 0.25s ease; }
-.frame > .on { opacity: 1; }
-.girl .frame {
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 13%, #000 87%, transparent), linear-gradient(180deg, transparent, #000 8%, #000 80%, transparent);
-  -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(90deg, transparent, #000 13%, #000 87%, transparent), linear-gradient(180deg, transparent, #000 8%, #000 80%, transparent);
-  mask-composite: intersect; }
-.pet .frame {
-  -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 52%, #000 56%, transparent 100%);
-  mask-image: radial-gradient(ellipse 50% 50% at 50% 52%, #000 56%, transparent 100%); }
-/* What the pet just did, floating just above its ears and never wider than the pet. */
-.pet figcaption { position: absolute; left: 50%; bottom: 86%; z-index: 2; transform: translateX(-50%);
-  width: max-content; max-width: 100%; text-align: center;
+   Both stand on one stage, cut out of their pictures. The girl is in the middle, full
+   length, feet on the floor line; kid.js swaps her mouth and eyes for the voice and
+   blinks, or puts a whole pose over her. The pet is smaller and kid.js walks it
+   around her on an oval of floor: in front of her, beside her, or behind her. */
+.stage { position: relative; z-index: 1; min-width: 0; min-height: 0;
+  --floor: 8%; /* room under her feet for the pet to pass in front */
+  --girl-h: 88%; }
+.ground { position: absolute; left: 50%; bottom: calc(var(--floor) - 1.2%); width: 26%; height: 5%; translate: -50% 0;
+  border-radius: 50%; background: radial-gradient(closest-side, rgba(40, 30, 70, 0.22), rgba(40, 30, 70, 0)); pointer-events: none; }
+.girl { position: absolute; z-index: 2; left: 50%; bottom: var(--floor); height: var(--girl-h); aspect-ratio: 3 / 4;
+  translate: -50% 0; margin: 0; pointer-events: none; }
+.girl .frame { position: absolute; inset: 0; transform-origin: 50% 97%;
+  animation: breathe 4.2s ease-in-out infinite, var(--feel, none), var(--poke, none); }
+.girl img, .pet img { position: absolute; display: block; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  -webkit-user-drag: none; pointer-events: none; }
+.girl .base, .girl .pose { inset: 0; width: 100%; height: 100%; }
+.girl .patch { opacity: 0; } /* placed over her face by kid.js, from sprites.json */
+.girl[data-mouth="1"] .m1, .girl[data-mouth="2"] .m2, .girl.blinking .blink { opacity: 1; }
+.girl .pose { opacity: 0; transition: opacity 0.16s ease; }
+.girl.posed .pose { opacity: 1; }
+.girl.posed .base, .girl.posed .patch { opacity: 0; transition: opacity 0.16s ease; }
+.girl .hit { position: absolute; pointer-events: auto; cursor: pointer; } /* her outline, placed by kid.js */
+
+.pet { position: absolute; left: 0; top: 0; z-index: 3; margin: 0; width: 6rem; height: 8rem; transform-origin: 50% 100%;
+  cursor: pointer; will-change: transform; }
+.pet .shadow { position: absolute; left: 12%; right: 12%; bottom: -4%; height: 10%; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(40, 30, 70, 0.26), rgba(40, 30, 70, 0)); }
+.pet .body { position: absolute; inset: 0; transform-origin: 50% 100%; }
+.pet .sprite { position: absolute; inset: 0; transform-origin: 50% 100%; }
+.pet .sprite img { inset: 0; width: 100%; height: 100%; }
+/* What the pet is doing, just above its head and never much wider than it. */
+.pet figcaption { position: absolute; left: 50%; bottom: 96%; z-index: 2; translate: -50% 0;
+  width: max-content; max-width: 220%; text-align: center; white-space: nowrap;
   border-radius: 0.9rem; padding: 0.3rem 0.75rem; font-size: 0.95rem; background: var(--glass-strong); }
 
-/* Stills breathe and bob; a playing video already moves, so it doesn't. */
-.girl, .pet { animation: breathe 4.5s ease-in-out infinite; transform-origin: 50% 100%; }
-.pet { animation-duration: 3.6s; }
-.girl.live, .pet.live { animation: none; }
-.girl.talking { animation: talk 0.42s ease-in-out infinite; }
-.girl.live.talking { animation: none; }
-.pet.react { animation: hop 0.5s ease-out 2; }
-.pet.evolve .frame { animation: evolve 1.4s ease-in-out 3; }
-.pet.evolve::before { content: ""; position: absolute; inset: -14%; border-radius: 50%; z-index: -1;
+/* The pet's moods, on its sprite (kid.js owns where it stands and its hops). */
+.pet .sprite.jump { animation: pet-jump 0.62s cubic-bezier(0.3, 0.9, 0.4, 1) 2; }
+.pet .sprite.listen { animation: pet-listen 0.9s ease-in-out infinite; }
+.pet .sprite.tilt { animation: pet-tilt 1.6s ease-in-out infinite; }
+.pet .sprite.evolve { animation: evolve 1.4s ease-in-out 3; }
+.pet .sprite.evolve::before { content: ""; position: absolute; inset: -18%; border-radius: 50%; z-index: -1;
   background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 64%); animation: shine 1.4s ease-in-out 3; }
-@keyframes breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.008); } }
-@keyframes talk { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
-@keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-16px); } }
-@keyframes evolve { 0%, 100% { filter: none; transform: scale(1); } 50% { filter: brightness(1.3) saturate(1.2); transform: scale(1.05); } }
+@keyframes pet-jump { 0%, 100% { translate: 0 0; scale: 1; } 15% { scale: 1.08 0.9; } 45% { translate: 0 -38%; scale: 0.95 1.06; } 75% { translate: 0 0; scale: 1.06 0.94; } }
+@keyframes pet-listen { 0%, 100% { scale: 1; } 50% { scale: 1.02 0.98; } }
+@keyframes pet-tilt { 0%, 100% { rotate: 0deg; } 30% { rotate: -9deg; } 70% { rotate: 7deg; } }
+@keyframes breathe { 0%, 100% { scale: 1; } 50% { scale: 1.006 1.012; } }
+@keyframes evolve { 0%, 100% { filter: none; scale: 1; } 50% { filter: brightness(1.3) saturate(1.2); scale: 1.08; } }
 @keyframes shine { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
 
-/* While she talks, the line's mood moves her; a tap bounces her. They use different
-   transform properties, so both can run at once. */
-.girl .frame { transform-origin: 50% 100%; animation: var(--feel, none), var(--poke, none); }
+/* While she talks, the line's mood moves her; a tap bounces her. They use transform
+   properties other than breathing's, so all can run at once. */
 .girl[data-feel="cheer"] { --feel: feel-cheer 0.8s ease-in-out infinite; }
 .girl[data-feel="happy"] { --feel: feel-happy 1.8s ease-in-out infinite; }
 .girl[data-feel="worried"] { --feel: feel-worried 2.4s ease-in-out infinite; }
@@ -219,16 +228,15 @@ body.quiet-time .night { opacity: 1; }
   --pad-l: max(var(--pad-x), env(safe-area-inset-left));
   /* The characters' row never drops below this, and grows to fill the screen when the
      rest is short. When the rest is long the page scrolls under the pinned mic. */
-  --stage-min: min(48vh, 120vw);
-  --stage-min: min(48svh, 120vw);
+  --stage-min: min(56vh, 150vw);
+  --stage-min: min(56svh, 150vw);
   position: relative; min-height: 100vh; min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(var(--stage-min), 1fr) auto auto;
   grid-template-areas: "bar" "stage" "side" "dock"; gap: 0.75rem;
   padding: var(--pad-t) var(--pad-r) var(--pad-b) var(--pad-l);
 }
 .bar { grid-area: bar; }
-.girl { grid-area: stage; justify-self: center; align-self: end; height: min(100%, 120vw); }
-.pet { grid-area: stage; justify-self: end; align-self: end; height: min(46%, 42vw); margin: 0 -0.4rem 3vh 0; margin-bottom: 3svh; }
+.stage { grid-area: stage; }
 .side { grid-area: side; }
 /* The mic stays at the bottom while the list scrolls under a fade of the page colour,
    which reaches exactly to the screen edges (any further and the phone could pan sideways). */
@@ -239,8 +247,7 @@ body.quiet-time .night { opacity: 1; }
 
 /* tablet portrait ---------------------------------------------------------------- */
 @media (orientation: portrait) and (min-width: 600px) {
-  #app { --pad-x: max(1.2rem, calc((100vw - 60rem) / 2)); --pad-y: 0.9rem; --stage-min: 40vh; --stage-min: 40svh; gap: 0.9rem; }
-  .pet { height: min(46%, 36vw); margin-right: 4%; }
+  #app { --pad-x: max(1.2rem, calc((100vw - 60rem) / 2)); --pad-y: 0.9rem; --stage-min: 46vh; --stage-min: 46svh; gap: 0.9rem; }
   .side { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; }
   .dock { grid-template-columns: minmax(0, 38rem); justify-content: center; }
 }
@@ -252,25 +259,14 @@ body.quiet-time .night { opacity: 1; }
   #app {
     --pad-x: clamp(0.6rem, 2.2vmin, 1.4rem);
     --pad-y: var(--pad-x);
-    /* The right column, and the room the characters get on the left of it. */
-    --side: clamp(15rem, 31vw, 27rem);
-    --stage: calc(100vw - var(--side) - var(--pad-l) - var(--pad-r) - var(--pad-x));
-    --girl-h: min(calc(100vh - 3.4rem), calc(var(--stage) * 0.9));
-    --girl-h: min(calc(100dvh - 3.4rem), calc(var(--stage) * 0.9));
-    --pet-h: min(58vh, calc(var(--stage) * 0.55));
-    --pet-h: min(58dvh, calc(var(--stage) * 0.55));
+    --side: clamp(15rem, 31vw, 27rem); /* the right column; the characters get the rest */
     position: fixed; inset: 0; min-height: 0; overflow: hidden;
     grid-template-columns: minmax(0, 1fr) var(--side);
     grid-template-rows: auto minmax(0, 1fr) auto;
     grid-template-areas: "bar bar" "talk side" "talk dock";
     gap: var(--pad-x);
   }
-  /* The characters stand on the bottom edge of the screen, sized from the room on the left. */
-  .girl { grid-area: auto; position: absolute; left: 0; bottom: 0; height: var(--girl-h); }
-  .girl .frame {
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 82%, transparent), linear-gradient(180deg, transparent, #000 12%);
-    mask-image: linear-gradient(90deg, transparent, #000 15%, #000 82%, transparent), linear-gradient(180deg, transparent, #000 12%); }
-  .pet { grid-area: auto; position: absolute; bottom: 0; margin: 0; height: var(--pet-h); left: calc(var(--girl-h) * 0.6); }
+  .stage { grid-area: talk; }
   .side { grid-area: side; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 0.2rem; }
   .dock { grid-area: dock; position: relative; bottom: auto; }
   .dock::before { display: none; }
@@ -285,12 +281,10 @@ body.quiet-time .night { opacity: 1; }
   .mic { height: 3.4rem; font-size: 1.2rem; }
   .ghost.round { width: 3rem; height: 3rem; }
 }
-/* A phone on its side is short: the pet stands at the right, out from under the
-   girl, which leaves the room beside her head for the bubble. */
+/* A phone on its side is short: the girl gets the whole height. */
 @media (orientation: landscape) and (min-width: 600px) and (max-height: 460px) {
   .next, .love-text { display: none; }
-  .pet { left: auto; right: calc(var(--side) + var(--pad-x) + var(--pad-r)); height: min(var(--pet-h), 52vh); height: min(var(--pet-h), 52dvh); }
-  .pet figcaption { left: auto; right: 88%; bottom: 40%; transform: none; max-width: 9rem; }
+  .stage { --girl-h: 90%; --floor: 7%; }
 }
 
 /* sheets ------------------------------------------------------------------ */
@@ -317,5 +311,5 @@ body.quiet-time .night { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .girl, .pet, .girl.talking, .pet.react, .pet.evolve .frame, .pet.evolve::before, .mic.listening, .girl .frame, .bubble.pop, .dots i { animation: none; }
+  .girl .frame, .pet .sprite, .pet .sprite::before, .mic.listening, .bubble.pop, .dots i { animation: none !important; }
 }

@@ -25,22 +25,24 @@
 </div>
 
 <main id="app" hidden>
-  <figure class="girl" id="girlFig">
-    <div class="frame">
-      <img class="base" id="girlImg" alt="">
-      <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
-      <video class="loop" data-loop="talk" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
-      <img class="expr" alt="" aria-hidden="true">
-    </div>
-  </figure>
-  <figure class="pet" id="petFig">
-    <div class="frame">
-      <img class="base" id="petImg" alt="">
-      <video class="loop" data-loop="idle" muted playsinline loop preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true" tabindex="-1"></video>
-      <img class="expr" alt="" aria-hidden="true">
-    </div>
-    <figcaption id="petSay" class="glass" hidden></figcaption>
-  </figure>
+  <div class="stage" id="stage">
+    <div class="ground" aria-hidden="true"></div>
+    <figure class="girl" id="girlFig">
+      <div class="frame">
+        <img class="base" id="girlImg" alt="">
+        <img class="patch blink" alt="" aria-hidden="true">
+        <img class="patch m1" alt="" aria-hidden="true">
+        <img class="patch m2" alt="" aria-hidden="true">
+        <img class="pose" alt="" aria-hidden="true">
+      </div>
+      <div class="hit"></div>
+    </figure>
+    <figure class="pet" id="petFig">
+      <div class="shadow" aria-hidden="true"></div>
+      <div class="body"><div class="sprite"><img id="petImg" alt=""></div></div>
+      <figcaption id="petSay" class="glass" hidden></figcaption>
+    </figure>
+  </div>
   <div class="night" aria-hidden="true"></div>
 
   <header class="bar">

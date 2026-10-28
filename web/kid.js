@@ -43,15 +43,13 @@ function showLocked() {
   $('app').hidden = true;
 }
 
-// ---- the two characters ------------------------------------------------------
-// Each is a stack of layers in one frame (see kid.css). show() asks for a loop,
-// a still, or a loop with a still standing in for it. A loop only lights once it
-// has really played, so the still underneath covers every failure: no H.264,
-// iOS Low Power Mode, slow Wi-Fi.
+// ---- the girl ------------------------------------------------------------------
+// She is a full-length cut-out (web/img/full, made by design/tools/full_body.py).
+// Her mouth and eyes are small patches laid over her face: the mouth opens with the
+// loudness of her voice, the eyes close for a blink every few seconds. A pose (a
+// mood, thinking, asleep) is a whole picture shown over her.
 
-const STILL_ONLY = matchMedia('(prefers-reduced-motion: reduce)').matches;
-// The colour each loop was painted on, where its edge fades out (sampled from the videos).
-// The page background is a gradient between the girl's and the pet's, so both melt into it.
+// The page colour behind each girl and pet, so the background suits whoever is out.
 const GIRL_BG = { a: '#ead2ce', b: '#94b8c7', c: '#c8a782', d: '#9fa3db' };
 const PET_BG = {
   '1_1': '#f3e1c9', '1_2': '#ecdbc9', '1_3': '#ead7c5', '1_4': '#e3d4c5',
@@ -59,129 +57,479 @@ const PET_BG = {
   '3_1': '#e3c0cb', '3_2': '#e2b9cc', '3_3': '#dbb9ca', '3_4': '#debed0',
   '4_1': '#a2c3d1', '4_2': '#9ebfcf', '4_3': '#a3c4d5', '4_4': '#99bcc7',
 };
-const EXPRESSIONS = ['happy', 'talk', 'think', 'sleepy', 'cheer', 'worried'];
+const POSES = ['happy', 'cheer', 'think', 'sleepy', 'worried'];
+const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const pct = (v) => `${(v * 100).toFixed(2)}%`;
+// Where each girl's mouth, face, feet and outline are, and where her patches go.
+let SPRITES = null;
+const spritesReady = fetch('/img/full/sprites.json')
+  .then((r) => r.json())
+  .then((j) => (SPRITES = j))
+  .catch(() => {});
 
-class Figure {
+const girlView = {
+  fig: $('girlFig'),
+  key: null,
+  posed: null,
+
+  set(g) {
+    if (this.key === g || !SPRITES || !SPRITES[g]) return;
+    this.key = g;
+    const m = SPRITES[g];
+    const fig = this.fig;
+    fig.querySelector('.base').src = `/img/full/${g}.webp`;
+    for (const k of ['m1', 'm2', 'blink']) {
+      const el = fig.querySelector(`.patch.${k}`);
+      const [x, y, w, h] = m.patches[k];
+      el.src = `/img/full/${g}_${k}.webp`;
+      Object.assign(el.style, { left: pct(x), top: pct(y), width: pct(w), height: pct(h) });
+    }
+    const [l, t, r, b] = m.bbox;
+    Object.assign(fig.querySelector('.hit').style, { left: pct(l), top: pct(t), width: pct(r - l), height: pct(b - t) });
+    this.warm = POSES.map((p) => Object.assign(new Image(), { src: `/img/full/${g}_${p}.webp` }));
+    this.posed = null;
+    fig.classList.remove('posed');
+  },
+
+  // A whole pose over her, or null for herself. A new picture is decoded first so it
+  // never shows half-drawn.
+  async show(name) {
+    if (name === this.posed || !this.key) return;
+    this.posed = name;
+    if (!name) {
+      this.fig.classList.remove('posed');
+      return;
+    }
+    const img = this.fig.querySelector('.pose');
+    const url = `/img/full/${this.key}_${name}.webp`;
+    if (img.getAttribute('src') !== url) {
+      img.src = url;
+      try {
+        await img.decode();
+      } catch {
+        return;
+      }
+      if (this.posed !== name) return;
+    }
+    this.fig.classList.add('posed');
+  },
+};
+
+// A blink every few seconds, now and then a double one.
+function blinkLater() {
+  clearTimeout(blinkLater.timer);
+  blinkLater.timer = setTimeout(() => {
+    const fig = girlView.fig;
+    const blink = (ms) => {
+      fig.classList.add('blinking');
+      setTimeout(() => fig.classList.remove('blinking'), ms);
+    };
+    if (!fig.classList.contains('posed') && !document.hidden) {
+      blink(130);
+      if (Math.random() < 0.2) setTimeout(() => blink(110), 300);
+    }
+    blinkLater();
+  }, 2200 + Math.random() * 3800);
+}
+
+// Her mouth follows her voice: everything she says goes through one analyser, and
+// each frame its loudness picks closed, a little open, or open. A voice the page
+// can't hear (the browser's own) gets a plain talking rhythm instead.
+let voiceOut = null;
+function voiceBus() {
+  if (!voiceOut && audioCtx) {
+    voiceOut = audioCtx.createAnalyser();
+    voiceOut.fftSize = 512;
+    voiceOut.connect(audioCtx.destination);
+  }
+  return voiceOut || (audioCtx && audioCtx.destination);
+}
+const lips = { level: 0, since: 0, frame: 0, heard: false, buf: new Float32Array(512) };
+function lipsStart(heard) {
+  lips.heard = heard && Boolean(voiceOut);
+  cancelAnimationFrame(lips.frame);
+  lips.frame = requestAnimationFrame(lipsTick);
+}
+function lipsStop() {
+  cancelAnimationFrame(lips.frame);
+  lips.frame = 0;
+  lipsSet(0);
+}
+function lipsTick(t) {
+  let want;
+  if (lips.heard) {
+    voiceOut.getFloatTimeDomainData(lips.buf);
+    let sum = 0;
+    for (let i = 0; i < lips.buf.length; i += 1) sum += lips.buf[i] * lips.buf[i];
+    const rms = Math.sqrt(sum / lips.buf.length);
+    want = rms < 0.02 ? 0 : rms < 0.08 ? 1 : 2; // tuned on real lines: about 40% closed, 15% half, 45% open
+  } else want = [1, 2, 1, 0, 2, 1, 0, 1][Math.floor(t / 90) % 8];
+  if (want !== lips.level && t - lips.since > 60) {
+    lipsSet(want);
+    lips.since = t;
+  }
+  lips.frame = requestAnimationFrame(lipsTick);
+}
+function lipsSet(level) {
+  lips.level = level;
+  girlView.fig.dataset.mouth = level;
+}
+
+// ---- the pet -------------------------------------------------------------------
+// It lives on an oval of floor round the girl's feet: in front of her (lower on the
+// screen and a little bigger), beside her, or behind her (higher, smaller, hidden by
+// her). On its own it hops about, sits and looks around, looks up at her, plays, runs
+// a circle round her, plays hide-and-seek behind her, and naps. When she talks it
+// comes close and listens; it cheers with her, wonders with her while she thinks,
+// turns to MoMo while MoMo talks, and curls up at her feet at night.
+
+const PET_HEAD = [0.2, 0.22, 0.8, 0.62]; // where its head is in its picture
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+class Pet {
   constructor(fig) {
     this.fig = fig;
-    this.base = fig.querySelector('.base');
-    this.expr = fig.querySelector('.expr');
-    this.loops = {};
-    this.want = {};
-    this.seq = 0;
-    this.warmKey = '';
-    this.warm = [];
-    for (const v of fig.querySelectorAll('video')) {
-      v.muted = true; // iOS looks at the property, not only the attribute
-      v.addEventListener('playing', () => {
-        v.ok = true;
-        this.paint();
-      });
-      v.addEventListener('error', () => {
-        v.failed = true;
-        this.paint();
-      });
-      this.loops[v.dataset.loop] = v;
-    }
+    this.body = fig.querySelector('.body');
+    this.sprite = fig.querySelector('.sprite');
+    this.img = fig.querySelector('img');
+    this.a = Math.PI * 0.3; // where it stands: angle round her (π/2 = in front)
+    this.r = 1.15; // and how far out, in units of the oval
+    this.face = -1; // 1 looks right, -1 left
+    this.hop = 0;
+    this.trip = null;
+    this.seq = 0; // bumped whenever something new takes over
+    this.mode = 'off'; // off | life | busy | asleep
+    this.mood = null; // its own picture: null, 'happy' or 'sleepy'
+    this.base = '';
+    this.frame = this.frame.bind(this);
   }
 
-  // The bottom still, the loops by name, and stills worth fetching ahead of time.
-  set(base, loops, extras) {
-    if (this.base.getAttribute('src') !== base) this.base.src = base;
-    for (const [name, v] of Object.entries(this.loops)) {
-      const src = STILL_ONLY ? null : loops[name] || null;
-      if (v.getAttribute('src') === src) continue;
-      v.ok = false;
-      v.failed = false;
-      if (src) v.src = src;
-      else {
-        v.removeAttribute('src');
-        v.load();
-      }
-    }
-    const key = extras.join('|');
-    if (key !== this.warmKey) {
-      this.warmKey = key;
-      this.warm = extras.map((src) => Object.assign(new Image(), { src }));
-    }
-  }
-
-  // { loop: 'idle' }, { img: url }, or both: the image stands in while the loop can't play.
-  show(want) {
-    this.want = want;
+  // The pet to show: which one and how grown up.
+  setPet(p, stage) {
+    const base = `/img/pet/sprite/${p}_${stage}`;
+    if (base === this.base) return;
+    this.base = base;
+    this.warm = ['happy', 'sleepy'].map((k) => Object.assign(new Image(), { src: `${base}_${k}.webp` }));
     this.paint();
   }
 
   paint() {
-    const asked = this.want.loop ? this.loops[this.want.loop] : null;
-    const usable = asked && asked.getAttribute('src') && !asked.failed ? asked : null;
-    for (const v of Object.values(this.loops)) {
-      if (v === usable) {
-        if (v.paused) {
-          v.play().catch((err) => {
-            if (err && err.name === 'AbortError') return; // we paused it again before it started
-            v.failed = true;
-            this.paint();
-          });
-        }
-      } else if (!v.paused) v.pause();
-      v.classList.toggle('on', v === usable && v.ok === true);
-    }
-    const live = Boolean(usable && usable.ok);
-    this.fig.classList.toggle('live', live);
-    this.still(live ? null : this.want.img || null);
+    const m = look.petMood || this.mood || (state && state.quiet ? 'sleepy' : null);
+    const url = m ? `${this.base}_${m}.webp` : `${this.base}.webp`;
+    if (this.base && this.img.getAttribute('src') !== url) this.img.src = url;
   }
 
-  // The expression layer. A new picture is decoded first so it never fades in half-drawn.
-  async still(url) {
-    const seq = ++this.seq;
-    if (!url) {
-      this.expr.classList.remove('on');
-      return;
+  setMood(m) {
+    this.mood = m;
+    this.paint();
+  }
+
+  // Sizes from the girl as she stands now.
+  layout() {
+    const st = $('stage').getBoundingClientRect();
+    const g = girlView.fig.getBoundingClientRect();
+    const m = SPRITES && girlView.key && SPRITES[girlView.key];
+    if (!m || !st.width || !g.height) return false;
+    const petH = g.height * 0.3;
+    const petW = petH * 0.75;
+    const cx = g.left - st.left + m.feet[0] * g.width;
+    const cy = g.top - st.top + m.feet[1] * g.height;
+    const bodyW = (m.bbox[2] - m.bbox[0]) * g.width;
+    const rx = bodyW / 2 + petW * 0.5 + 4;
+    this.G = { cx, cy, rx, ry: rx * 0.22, petW, petH, minX: petW / 2 + 2, maxX: st.width - petW / 2 - 2 };
+    this.fig.style.width = `${petW}px`;
+    this.fig.style.height = `${petH}px`;
+    this.place();
+    return true;
+  }
+
+  where(a = this.a, r = this.r) {
+    const G = this.G;
+    return [Math.min(G.maxX, Math.max(G.minX, G.cx + G.rx * r * Math.cos(a))), G.cy + G.ry * r * Math.sin(a)];
+  }
+
+  place() {
+    if (!this.G) return;
+    const G = this.G;
+    const [x, y] = this.where();
+    const depth = Math.sin(this.a) * Math.min(1, this.r);
+    const s = 1 + 0.1 * depth;
+    this.fig.style.transform = `translate3d(${(x - G.petW / 2).toFixed(1)}px, ${(y - G.petH).toFixed(1)}px, 0) scale(${s.toFixed(3)})`;
+    this.fig.style.zIndex = depth < -0.2 ? 1 : 3; // behind her, or in front
+    this.body.style.transform = `translateY(${(-this.hop).toFixed(1)}px) scaleX(${this.face})`;
+  }
+
+  // Hop over to (a, r). dir: 0 the short way round, 1 or -1 to go round that way
+  // (a full circle passes behind her). Resolves on arrival, or early if interrupted.
+  go(a, r, { speed = 1.8, dir = 0, hops = true } = {}) {
+    if (!this.G) return Promise.resolve();
+    this.stop();
+    let da = a - this.a;
+    if (dir === 0) da = Math.atan2(Math.sin(da), Math.cos(da));
+    else if (dir > 0 && da <= 0) da += Math.PI * 2;
+    else if (dir < 0 && da >= 0) da -= Math.PI * 2;
+    const G = this.G;
+    const len = Math.abs(da) * ((G.rx + G.ry) / 2) * Math.max(this.r, r) + Math.abs(r - this.r) * G.rx;
+    const dur = STILL ? 0 : Math.min(7000, Math.max(300, (len / (speed * G.petW)) * 1000));
+    return new Promise((resolve) => {
+      this.trip = { a0: this.a, r0: this.r, da, dr: r - this.r, t0: performance.now(), dur, hops, resolve, x: this.where()[0] };
+      requestAnimationFrame(this.frame);
+    });
+  }
+
+  stop() {
+    if (!this.trip) return;
+    const t = this.trip;
+    this.trip = null;
+    this.hop = 0;
+    this.place();
+    t.resolve();
+  }
+
+  frame(now) {
+    const t = this.trip;
+    if (!t) return;
+    const k = t.dur ? Math.min(1, (now - t.t0) / t.dur) : 1;
+    const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    this.a = t.a0 + t.da * e;
+    this.r = t.r0 + t.dr * e;
+    const [x] = this.where();
+    if (Math.abs(x - t.x) > 0.4) this.face = x > t.x ? 1 : -1;
+    t.x = x;
+    this.hop = t.hops && k < 1 ? Math.abs(Math.sin(((now - t.t0) / 1000) * Math.PI * 2.6)) * this.G.petH * 0.12 : 0;
+    this.place();
+    if (k >= 1) {
+      this.trip = null;
+      this.a = Math.atan2(Math.sin(this.a), Math.cos(this.a));
+      t.resolve();
+    } else requestAnimationFrame(this.frame);
+  }
+
+  // Turn to look at her.
+  faceHer() {
+    const [x] = this.where();
+    this.face = x < this.G.cx ? 1 : -1;
+    this.place();
+  }
+
+  // A one-off move on its picture: 'jump', or a lasting one: 'listen', 'tilt'.
+  act(cls, on = true) {
+    if (cls === 'jump') {
+      this.sprite.classList.remove('jump');
+      void this.sprite.offsetWidth;
     }
-    if (this.expr.getAttribute('src') !== url) {
-      this.expr.src = url;
-      try {
-        await this.expr.decode();
-      } catch {
-        return; // missing picture: leave whatever is under it
-      }
+    this.sprite.classList.toggle(cls, on);
+    if (cls === 'jump' && on) setTimeout(() => this.sprite.classList.remove('jump'), 1300);
+  }
+
+  // Something new is happening: whatever it was doing stops.
+  takeOver(mode) {
+    this.seq += 1;
+    this.mode = mode;
+    this.stop();
+    this.act('listen', false);
+    this.act('tilt', false);
+    return this.seq;
+  }
+
+  // ---- on its own ----
+  start() {
+    if (!this.G && !this.layout()) return;
+    if (this.mode === 'off') this.live(1500);
+  }
+
+  live(after = 2500) {
+    const seq = this.takeOver('life');
+    this.setMood(null);
+    this.lifeLoop(seq, after);
+  }
+
+  async lifeLoop(seq, after) {
+    await sleep(after);
+    let quiet = 0;
+    while (seq === this.seq) {
+      if (STILL) return;
+      const roll = Math.random() * 100;
+      quiet += 1;
+      if (roll < 34) await this.wander(seq);
+      else if (roll < 48) await this.lookAround(seq);
+      else if (roll < 60) await this.play(seq);
+      else if (roll < 72) await this.circle(seq);
+      else if (roll < 84) await this.peek(seq);
+      else if (quiet > 8) {
+        await this.nap(seq);
+        quiet = 0;
+      } else await this.wander(seq);
       if (seq !== this.seq) return;
+      await sleep(1500 + Math.random() * 3500);
     }
-    this.expr.classList.add('on');
   }
 
-  // Called inside the start tap: a play() begun by a gesture unlocks the element
-  // for later, even where muted autoplay is otherwise blocked.
-  prime() {
-    for (const v of Object.values(this.loops)) {
-      if (!v.getAttribute('src')) continue;
-      v.failed = false;
-      v.play().then(() => this.paint(), () => {});
+  async wander(seq) {
+    const side = Math.random() < 0.8;
+    const a = side ? Math.PI * (0.1 + Math.random() * 0.8) : Math.random() < 0.5 ? -0.15 : Math.PI + 0.15;
+    await this.go(a, 0.85 + Math.random() * 0.6);
+    if (seq !== this.seq) return;
+    if (Math.random() < 0.6) this.faceHer();
+    await sleep(1200 + Math.random() * 2500);
+  }
+
+  async lookAround(seq) {
+    for (let i = 0; i < 3 && seq === this.seq; i += 1) {
+      this.face = -this.face;
+      this.place();
+      await sleep(600 + Math.random() * 700);
     }
+  }
+
+  async play(seq) {
+    this.setMood('happy');
+    this.act('jump');
+    if (girlFree()) mood('happy', 1300); // she smiles at it
+    await sleep(1500);
+    if (seq === this.seq) this.setMood(null);
+  }
+
+  // Once round her: it disappears behind her and comes out the other side.
+  async circle(seq) {
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    await this.go(this.a + dir * Math.PI * 2, 1.05, { speed: 2.6, dir });
+    if (seq !== this.seq) return;
+    this.act('jump');
+    if (girlFree()) mood('happy', 1300);
+  }
+
+  // Hide behind her, wait, pop out on the other side.
+  async peek(seq) {
+    const [x] = this.where();
+    const left = x < this.G.cx;
+    await this.go(-Math.PI / 2 + (left ? -0.2 : 0.2), 0.75, { speed: 1.4 });
+    if (seq !== this.seq) return;
+    await sleep(1400 + Math.random() * 1500);
+    if (seq !== this.seq) return;
+    await this.go(left ? 0.12 : Math.PI - 0.12, 1.1, { speed: 2.4, dir: left ? 1 : -1 });
+    if (seq !== this.seq) return;
+    this.faceHer();
+    this.setMood('happy');
+    this.act('jump');
+    await sleep(1300);
+    if (seq === this.seq) this.setMood(null);
+  }
+
+  async nap(seq) {
+    this.faceHer();
+    this.setMood('sleepy');
+    await sleep(8000 + Math.random() * 6000);
+    if (seq === this.seq) this.setMood(null);
+  }
+
+  // ---- with her ----
+  // She has started a line: come close on the side away from her words, look up at
+  // her and listen.
+  async attend() {
+    if (!this.G || this.mode === 'asleep') return;
+    const seq = this.takeOver('busy');
+    const b = $('bubble').getBoundingClientRect();
+    const st = $('stage').getBoundingClientRect();
+    const wordsLeft = !$('bubble').hidden && (b.left + b.right) / 2 - st.left < this.G.cx;
+    await this.go(wordsLeft ? Math.PI * 0.28 : Math.PI * 0.72, 0.85, { speed: 2.2 });
+    if (seq !== this.seq) return;
+    this.faceHer();
+    this.act('listen');
+  }
+
+  // Her line is over: back to its own life in a moment.
+  release() {
+    if (this.mode === 'busy') this.live(1800);
+  }
+
+  cheer() {
+    if (!this.G || this.mode === 'asleep') return;
+    this.setMood('happy');
+    this.act('jump');
+    setTimeout(() => this.mood === 'happy' && this.setMood(null), 2600);
+  }
+
+  // She is thinking: sit by her and wonder too.
+  async ponder() {
+    if (!this.G || this.mode === 'asleep') return;
+    const seq = this.takeOver('busy');
+    const [x] = this.where();
+    await this.go(x < this.G.cx ? Math.PI * 0.7 : Math.PI * 0.3, 0.9);
+    if (seq !== this.seq) return;
+    this.faceHer();
+    this.act('tilt');
+  }
+
+  // MoMo is talking: come to the front and listen to MoMo.
+  async hearMoMo() {
+    if (!this.G || this.mode === 'asleep') return;
+    const seq = this.takeOver('busy');
+    await this.go(Math.PI / 2 + (Math.random() - 0.5) * 0.6, 1.0, { speed: 2.2 });
+    if (seq !== this.seq) return;
+    this.act('listen');
+  }
+
+  // Tapped: a happy jump, then a quick lap of joy.
+  async poked() {
+    if (!this.G) return;
+    const seq = this.takeOver('busy');
+    this.setMood('happy');
+    this.act('jump');
+    await sleep(1300);
+    if (seq !== this.seq) return;
+    if (Math.random() < 0.5) await this.circle(seq);
+    if (seq !== this.seq) return;
+    this.setMood(null);
+    this.live(1500);
+  }
+
+  // She was tapped: run to her side and look up at her.
+  async call() {
+    if (!this.G || this.mode === 'asleep' || this.mode === 'busy') return;
+    const seq = this.takeOver('busy');
+    const [x] = this.where();
+    await this.go(x < this.G.cx ? Math.PI * 0.75 : Math.PI * 0.25, 0.8, { speed: 2.6 });
+    if (seq !== this.seq) return;
+    this.faceHer();
+    this.act('jump');
+    this.live(2500);
+  }
+
+  // Night: curl up at her feet.
+  async bedtime() {
+    if (this.mode === 'asleep' || !this.G) return;
+    const seq = this.takeOver('asleep');
+    await this.go(Math.PI * 0.62, 0.8, { speed: 1.2 });
+    if (seq !== this.seq) return;
+    this.faceHer();
+    this.setMood('sleepy');
+  }
+
+  wake() {
+    if (this.mode === 'asleep') this.live(1000);
+  }
+
+  evolve() {
+    this.sprite.classList.remove('evolve');
+    void this.sprite.offsetWidth;
+    this.sprite.classList.add('evolve');
+    setTimeout(() => this.sprite.classList.remove('evolve'), 4500);
   }
 }
 
-const girl = new Figure($('girlFig'));
-const pet = new Figure($('petFig'));
+const petLife = new Pet($('petFig'));
 const look = { speaking: false, thinking: false, mood: null, petMood: null, feel: null };
+// Free to react to the pet: not talking, thinking, listening or posing for something else.
+const girlFree = () => !look.speaking && !look.thinking && !look.mood && !busy && !rec && !(state && state.quiet);
 
-// Most important first: a passing mood, talking, thinking, asleep at night, idle.
+// Most important first: a passing mood, talking, thinking, asleep at night, herself.
 function pose() {
   if (!state) return;
-  const face = (name) => `/img/expr/${state.profile.girl}_${name}.jpg`;
-  if (look.mood) girl.show({ img: face(look.mood) });
-  else if (look.speaking) girl.show({ loop: 'talk', img: face('talk') });
-  else if (look.thinking) girl.show({ img: face('think') });
-  else if (state.quiet) girl.show({ img: face('sleepy') });
-  else girl.show({ loop: 'idle' });
-  girl.fig.classList.toggle('talking', look.speaking);
-  girl.fig.dataset.feel = look.speaking && look.feel ? look.feel : '';
-
-  const p = `/img/pet/${state.profile.pet}_${state.affinity.stage}`;
-  if (look.petMood) pet.show({ img: `${p}_${look.petMood}.jpg` });
-  else if (state.quiet) pet.show({ img: `${p}_sleepy.jpg` });
-  else pet.show({ loop: 'idle' });
+  girlView.show(look.mood || (look.speaking ? null : look.thinking ? 'think' : state.quiet ? 'sleepy' : null));
+  girlView.fig.classList.toggle('talking', look.speaking);
+  girlView.fig.dataset.feel = look.speaking && look.feel ? look.feel : '';
+  petLife.paint();
 }
 
 // A passing expression: shown for a moment, then back to whatever comes next.
@@ -197,6 +545,13 @@ function flash(key, name, ms) {
 const mood = (name, ms = 2400) => flash('mood', name, ms);
 const petMood = (name, ms = 3000) => flash('petMood', name, ms);
 
+addEventListener('resize', () =>
+  requestAnimationFrame(() => {
+    petLife.layout();
+    placeBubble();
+  }),
+);
+
 // ---- rendering ---------------------------------------------------------------
 
 const STATUS = { todo: '', redo: '再做一下', waiting: '⏳ 等妈妈看', confirmed: '✓ 完成' };
@@ -211,10 +566,17 @@ function render(s) {
   document.body.style.setProperty('--pc', PET_BG[`${p}_${stage}`] || GIRL_BG[g] || GIRL_BG.b);
   document.body.classList.toggle('quiet-time', Boolean(s.quiet));
   document.querySelector('meta[name="theme-color"]').content = GIRL_BG[g] || GIRL_BG.b;
-  girl.set(`/img/girl_${g}.jpg`, { idle: `/vid/girl_${g}_idle.mp4`, talk: `/vid/girl_${g}_talk.mp4` },
-    EXPRESSIONS.map((n) => `/img/expr/${g}_${n}.jpg`));
-  pet.set(`/img/pet/${p}_${stage}.jpg`, { idle: `/vid/pet_${p}_${stage}.mp4` },
-    ['happy', 'sleepy'].map((n) => `/img/pet/${p}_${stage}_${n}.jpg`));
+  spritesReady.then(() => {
+    girlView.set(g);
+    pose();
+    if (started) petLife.layout();
+    placeBubble();
+  });
+  petLife.setPet(p, stage);
+  if (started) {
+    if (s.quiet) petLife.bedtime();
+    else petLife.wake();
+  }
   $('girlImg').alt = s.girls[g] ? s.girls[g].name : '';
   $('petImg').alt = s.pets[p] ? s.pets[p].name : '';
   $('startImg').src = `/img/girl_${g}.jpg`;
@@ -320,20 +682,18 @@ async function say(text, { pet: petAction = null, mood: feel = null } = {}) {
   const finished = await speak(text, () => {
     showWords(text);
     look.feel = feel;
+    petLife.attend(); // it comes over to listen
     if (petAction) {
       petCaption(petAction);
-      replay($('petFig'), 'react');
       petMood('happy', 20000); // ends with the line, see below
     }
-    if (evolving) {
-      replay($('petFig'), 'evolve');
-      clearTimeout(say.evolveTimer);
-      say.evolveTimer = setTimeout(() => $('petFig').classList.remove('evolve'), 4500);
-    }
+    if (feel === 'cheer' || petAction) petLife.cheer();
+    if (evolving) petLife.evolve();
     pose();
   });
   if (!finished) return; // a newer line took over
   look.feel = null;
+  petLife.release();
   if (petAction) petCaption(petAction, 1500);
   if (look.petMood === 'happy') petMood('happy', 600);
   if (feel) mood(feel, 1500);
@@ -348,13 +708,14 @@ async function speak(text, onStart = () => {}) {
   const my = ++speakSeq;
   const mine = () => my === speakSeq;
   let begun = false;
-  const begin = () => {
+  const begin = (heard = false) => {
     if (!mine() || begun) return;
     begun = true;
     look.thinking = false;
     look.speaking = true;
     onStart();
     pose();
+    lipsStart(heard);
   };
   look.thinking = true;
   pose();
@@ -373,7 +734,7 @@ async function speak(text, onStart = () => {}) {
       }
     }
     if (res && res.status === 200) await playVoice(res, mine, begin);
-    else await browserSpeak(text, begin);
+    else await browserSpeak(text, () => begin(false));
   } catch (err) {
     console.warn('speak failed', err);
   }
@@ -382,6 +743,7 @@ async function speak(text, onStart = () => {}) {
     begun = true;
     onStart();
   }
+  lipsStop();
   look.speaking = false;
   look.thinking = false;
   pose();
@@ -410,28 +772,18 @@ function petCaption(text, ms = 8000) {
 
 // ---- the speech bubble ------------------------------------------------------------
 // An oval of frosted glass beside the speaking girl's mouth, its tail pointing at
-// her mouth. Where her mouth and face are in each 720×960 picture:
-const FACES = {
-  a: { mouth: [0.5, 0.43], face: [0.28, 0.18, 0.72, 0.5] },
-  b: { mouth: [0.435, 0.435], face: [0.26, 0.2, 0.7, 0.5] },
-  c: { mouth: [0.53, 0.495], face: [0.27, 0.25, 0.76, 0.57] },
-  d: { mouth: [0.545, 0.43], face: [0.3, 0.18, 0.78, 0.5] },
-};
-const PET_HEAD = [0.2, 0.22, 0.8, 0.62];
+// her mouth (where her mouth and face are comes from sprites.json).
 const bubble = { mode: null, text: '' };
 
-// Where a point of a 720×960 picture lands on screen inside its figure, which shows
-// it with object-fit: cover at object-position 50% 15%.
-function picturePoint(fig, fx, fy) {
-  const r = fig.getBoundingClientRect();
-  const scale = Math.max(r.width / 720, r.height / 960);
-  const w = 720 * scale;
-  const h = 960 * scale;
-  return [r.left + (r.width - w) * 0.5 + fx * w, r.top + (r.height - h) * 0.15 + fy * h];
+// Where a point of a picture (as fractions of it) is on screen; each picture fills
+// its box exactly.
+function picturePoint(el, fx, fy) {
+  const r = el.getBoundingClientRect();
+  return [r.left + fx * r.width, r.top + fy * r.height];
 }
-function pictureBox(fig, [x0, y0, x1, y1]) {
-  const [l, t] = picturePoint(fig, x0, y0);
-  const [r, b] = picturePoint(fig, x1, y1);
+function pictureBox(el, [x0, y0, x1, y1]) {
+  const [l, t] = picturePoint(el, x0, y0);
+  const [r, b] = picturePoint(el, x1, y1);
   return { l, t, r, b };
 }
 const area = (a) => Math.max(0, a.r - a.l) * Math.max(0, a.b - a.t);
@@ -454,7 +806,8 @@ function showWords(text) {
 // face, the pet's face, or anything outside the stage.
 function placeBubble() {
   const el = $('bubble');
-  if (!bubble.mode || !state || $('app').hidden) {
+  const m = SPRITES && girlView.key && SPRITES[girlView.key];
+  if (!bubble.mode || !state || !m || $('app').hidden) {
     el.hidden = true;
     return;
   }
@@ -466,18 +819,17 @@ function placeBubble() {
   const bar = $('app').querySelector('.bar').getBoundingClientRect();
   const girlFig = $('girlFig');
   const wide = matchMedia('(orientation: landscape) and (min-width: 600px)').matches;
+  const st = $('stage').getBoundingClientRect();
   const region = {
-    l: app.left + parseFloat(pad.paddingLeft),
-    t: bar.bottom + rem * 0.5,
+    l: Math.max(st.left, app.left + parseFloat(pad.paddingLeft)),
+    t: Math.max(st.top, bar.bottom + rem * 0.5),
     r: wide ? $('app').querySelector('.side').getBoundingClientRect().left - rem * 0.6 : app.right - parseFloat(pad.paddingRight),
-    b: wide ? app.bottom - parseFloat(pad.paddingBottom) : girlFig.getBoundingClientRect().bottom + rem * 0.5,
+    b: st.bottom,
   };
-  const f = FACES[state.profile.girl] || FACES.b;
-  const [mx, my] = picturePoint(girlFig, ...f.mouth);
-  const face = pictureBox(girlFig, f.face);
-  const petHead = pictureBox($('petFig'), PET_HEAD);
-  const g = girlFig.getBoundingClientRect();
-  const body = { l: g.left, t: g.top, r: g.right, b: g.bottom };
+  const [mx, my] = picturePoint(girlFig, ...m.mouth);
+  const face = pictureBox(girlFig, m.face);
+  const petHead = pictureBox($('petFig').querySelector('.sprite'), PET_HEAD);
+  const body = pictureBox(girlFig, m.bbox);
   const gap = rem * 0.9;
 
   // The words' natural block at a given width, and the oval around it.
@@ -618,10 +970,10 @@ async function playVoice(res, mine, onStart) {
   if (audioCtx && audioCtx.state !== 'running') await audioCtx.resume().catch(() => {});
   if (!audioCtx || audioCtx.state !== 'running' || !res.body || !res.body.getReader) {
     const pcm = new Uint8Array(await res.arrayBuffer());
-    if (mine()) await playWav(pcm, rate, onStart);
+    if (mine()) await playWav(pcm, rate, () => onStart(false));
     return;
   }
-  const player = new VoicePlayer(audioCtx, rate, onStart);
+  const player = new VoicePlayer(audioCtx, rate, () => onStart(true));
   const reader = res.body.getReader();
   currentAudio = {
     stop() {
@@ -727,7 +1079,7 @@ class VoicePlayer {
     buffer.getChannelData(0).set(all);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(ctx.destination);
+    src.connect(ctx === audioCtx ? voiceBus() : ctx.destination);
     src.onended = () => {
       this.sources.delete(src);
       if (this.done && !this.sources.size && this.ended) this.ended();
@@ -822,6 +1174,7 @@ function stopSpeaking() {
   speakSeq += 1; // whatever line was in progress is no longer ours
   look.speaking = false;
   look.feel = null;
+  lipsStop();
   if (currentAudio) {
     currentAudio.stop();
     currentAudio = null;
@@ -876,6 +1229,7 @@ function setBusy(on, label) {
     look.thinking = true;
     pose();
     showThinking();
+    petLife.ponder();
   }
 }
 
@@ -916,6 +1270,7 @@ async function startListening() {
   proc.connect(audioCtx.destination);
   rec = r;
   $('bubble').classList.add('dim');
+  petLife.hearMoMo();
   const mic = $('mic');
   mic.classList.add('listening');
   mic.textContent = '说完点我';
@@ -932,6 +1287,7 @@ async function stopListening() {
   $('mic').classList.remove('listening');
   if (!r.heard) {
     setBusy(false);
+    petLife.release();
     return;
   }
   setBusy(true, '在听…');
@@ -1002,6 +1358,7 @@ const pick = (list) => list[Math.floor(Math.random() * list.length)];
 $('girlFig').addEventListener('click', () => {
   if (!started || !state) return;
   replay($('girlFig'), 'poked');
+  petLife.call(); // the pet runs over to see
   if (look.speaking || look.thinking || busy || rec) return; // busy: the bounce is enough
   if (Date.now() - lastPokeLine > 8000) {
     lastPokeLine = Date.now();
@@ -1009,13 +1366,23 @@ $('girlFig').addEventListener('click', () => {
   } else mood(pick(['happy', 'cheer']), 1400);
 });
 
+// Three taps on the pet in a row and she has something to say about it.
+const PET_LINES = ['{p}好喜欢你呀！', '{p}，别闹啦，嘻嘻～', '你看{p}多开心！', '{p}在跟你玩呢！'];
+let petTaps = [];
+let lastPetLine = 0;
 $('petFig').addEventListener('click', () => {
   if (!started || !state) return;
   const p = state.pets[state.profile.pet];
-  replay($('petFig'), 'react');
-  petMood('happy', 1800);
+  petLife.poked();
   if (p) petCaption(`${p.sound} ${p.name}${pick(p.moves)}`, 2600);
   if (!look.speaking && !rec) chirp();
+  const now = Date.now();
+  petTaps = [...petTaps.filter((t) => now - t < 6000), now];
+  if (p && petTaps.length >= 3 && girlFree() && now - lastPetLine > 40000) {
+    lastPetLine = now;
+    petTaps = [];
+    say(pick(PET_LINES).replace('{p}', p.name), { mood: 'happy' });
+  }
 });
 
 // Two quick rising notes, quiet.
@@ -1158,8 +1525,6 @@ $('startBtn').addEventListener('click', async () => {
   started = true;
   $('start').hidden = true;
   $('app').hidden = false;
-  girl.prime();
-  pet.prime();
   unlockAudio();
   if (audioCtx) await audioCtx.resume().catch(() => {});
   if ('speechSynthesis' in window) speechSynthesis.getVoices();
@@ -1172,6 +1537,14 @@ $('startBtn').addEventListener('click', async () => {
     body: JSON.stringify({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio }),
   }).catch(() => {});
   if (state) render(state); // someone is watching now, so a new pet stage can be announced
+  blinkLater();
+  spritesReady.then(() =>
+    requestAnimationFrame(() => {
+      petLife.layout();
+      if (state && state.quiet) petLife.bedtime();
+      else petLife.start();
+    }),
+  );
   const kid = state ? state.profile.kidName : '';
   say(`${kid}，我在这儿呢！想问什么就按一下说话。`, { mood: 'happy' });
 });

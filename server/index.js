@@ -1,3 +1,4 @@
+import './network.js';
 import { createServer } from 'node:http';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

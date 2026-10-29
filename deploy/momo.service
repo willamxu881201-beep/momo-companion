@@ -13,7 +13,9 @@ ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
 Restart=always
 RestartSec=3
 
-# The app only writes its database and the photos it keeps for a week (both in /var/lib/momo).
+# The app only writes its database and the photos and documents it keeps for a while
+# (both in /var/lib/momo), and temporary files in its own /tmp (PrivateTmp) while
+# LibreOffice converts an old-format document.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

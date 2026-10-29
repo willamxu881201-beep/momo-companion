@@ -1,7 +1,8 @@
-// Photos and files sent to the companion, and the tablet's check-in snapshots. Each is
-// kept on disk under DATA_DIR/files for a week, so Mom can look at it, then deleted
-// (see sweep, run by the scheduler). PDFs are read as page images, made with poppler's
-// pdftoppm when it is installed (deploy/install.sh installs it).
+// Photos and documents sent to the companion, and the tablet's check-in snapshots. They
+// are kept on disk under DATA_DIR/files — photos for a week, documents for a month, so
+// Mom can look at them and ask about them — then deleted (see sweep, run by the
+// scheduler). A PDF that is only pictures is read as page images, made with poppler's
+// pdftoppm (deploy/install.sh installs it).
 
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -10,7 +11,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export const KEEP_DAYS = 7;
-export const MIME_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+export const DOC_DAYS = 30;
+export const MIME_EXT = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'application/msword': 'doc', 'application/vnd.ms-excel': 'xls', 'application/vnd.ms-powerpoint': 'ppt',
+  'application/rtf': 'rtf', 'text/plain': 'txt', 'text/csv': 'csv',
+};
 
 export class Files {
   constructor(store, dataDir) {
@@ -34,6 +43,18 @@ export class Files {
     } catch {
       return null;
     }
+  }
+
+  // Deletes one file, now.
+  remove(id) {
+    const f = this.store.getFile(id);
+    if (!f) return;
+    try {
+      unlinkSync(join(this.root, f.path));
+    } catch {
+      /* already gone */
+    }
+    this.store.deleteFile(id);
   }
 
   // Deletes what is past its keep-by date; returns how many went.

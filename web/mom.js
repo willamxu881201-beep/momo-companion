@@ -1,11 +1,12 @@
 // Mom's page: the same companion as MoMo's, talking with Mom. She answers questions about
 // MoMo's day, looks in on her through the tablet's camera, passes messages both ways,
-// reads photos of timetables and homework, and keeps Mom posted as things happen. The
-// side column holds what Mom needs: today's tasks to confirm, buttons to look in, and
-// the day's record with its photos. The old settings live in the 管理 sheet (admin.js).
+// reads photos and documents (timetables, homework, notices, score sheets…) and answers
+// from them, and keeps Mom posted as things happen. The side column holds what Mom
+// needs: today's tasks to confirm, buttons to look in, and the day's record with its
+// photos and documents. The old settings live in the 管理 sheet (admin.js).
 
 import {
-  $, api, app, pick, placeBubble, pose, say, sendPicture, setBusy, showCharacters, sleep, stopSpeaking, wakeUp,
+  $, api, app, pick, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, stopSpeaking, wakeUp,
 } from './companion.js';
 import { initAdmin, refreshAdmin, renderAdmin } from './admin.js';
 
@@ -44,7 +45,7 @@ function showLogin() {
 const STATUS = { todo: '还没做', redo: '要重做', waiting: '等你确认', confirmed: '✓ 已确认' };
 const KIND_ICON = {
   done: '✅', review: '👍', reminder: '⏰', alarm: '⏰', photo: '🖼️', timetable: '🗓️', homework_list: '📝',
-  homework_page: '📖', check: '📷', message: '💬', task: '➕', undo: '↩️',
+  homework_page: '📖', check: '📷', message: '💬', task: '➕', undo: '↩️', document: '📄',
 };
 const hhmm = (ms) => new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
@@ -112,7 +113,9 @@ function renderFeed() {
           el('li', { class: e.undone ? 'undone' : '' },
             el('span', { class: 'when' }, hhmm(e.at)),
             el('span', { class: 'what' }, `${KIND_ICON[e.kind] || '·'} ${e.text}`),
-            e.fileId ? el('button', { class: 'thumb', type: 'button', onclick: () => showPhoto(e), 'aria-label': '看照片' }, el('img', { src: `/api/parent/files/${e.fileId}`, alt: '', loading: 'lazy' })) : null,
+            e.doc
+              ? el('button', { class: 'thumb doc', type: 'button', onclick: () => showDoc(e), 'aria-label': '看文件' }, '📄')
+              : e.fileId ? el('button', { class: 'thumb', type: 'button', onclick: () => showPhoto(e), 'aria-label': '看照片' }, el('img', { src: `/api/parent/files/${e.fileId}`, alt: '', loading: 'lazy' })) : null,
             e.undo ? el('button', { class: 'undo', type: 'button', onclick: () => undo(e) }, '撤销') : null,
           ))
       : [el('li', { class: 'empty' }, '今天还没有动态')]),
@@ -126,6 +129,45 @@ function showPhoto(e) {
 }
 $('photoClose').addEventListener('click', () => ($('photo').hidden = true));
 $('photo').addEventListener('click', (e) => e.target === $('photo') && ($('photo').hidden = true));
+
+// A document's card: what the companion made of it, and the file itself to save.
+let shownDoc = null;
+async function showDoc(e) {
+  let d;
+  try {
+    d = await api(`/api/parent/docs/${e.fileId}`);
+  } catch (err) {
+    if (err.message !== 'locked') say(`没打开：${err.message}`, { mood: 'worried' });
+    return;
+  }
+  shownDoc = d;
+  const kid = app.state ? app.state.profile.kidName : '孩子';
+  const doc = d.doc;
+  $('docTitle').textContent = doc ? doc.title : d.name || '文件';
+  $('docMeta').textContent = [`${hhmm(d.at)} ${d.who === 'kid' ? kid : '妈妈'}发来的${d.typeZh}文件`, d.name && `《${d.name}》`, d.size, d.cut && '很长，只读了一部分'].filter(Boolean).join(' · ');
+  $('docGist').textContent = doc ? doc.gist : d.summary;
+  const list = (title, items) => (items.length ? [el('h3', {}, title), el('ul', {}, ...items.map((x) => el('li', {}, x)))] : []);
+  $('docMore').replaceChildren(
+    ...(doc
+      ? [
+          ...list('要点', doc.points),
+          ...list('日子', doc.dates.map((x) => `${x.dateZh}：${x.what}`)),
+          ...list('要做的', doc.todo),
+        ]
+      : []),
+  );
+  $('docSave').href = `/api/parent/files/${d.id}?download=1`;
+  $('docSheet').hidden = false;
+}
+$('docClose').addEventListener('click', () => ($('docSheet').hidden = true));
+$('docSheet').addEventListener('click', (e) => e.target === $('docSheet') && ($('docSheet').hidden = true));
+// Ask about it: the question box opens with the document's name already in it.
+$('docAsk').addEventListener('click', () => {
+  $('docSheet').hidden = true;
+  $('typeForm').hidden = false;
+  $('typeText').value = `《${shownDoc && shownDoc.doc ? shownDoc.doc.title : (shownDoc && shownDoc.name) || '这个文件'}》里`;
+  $('typeText').focus();
+});
 
 async function undo(e) {
   if (!confirm(`撤销「${e.text}」？`)) return;
@@ -243,9 +285,9 @@ $('photoInput').addEventListener('change', async () => {
   $('photoInput').value = '';
   if (!file) return;
   stopSpeaking();
-  setBusy(true, '看一看…');
+  setBusy(true, file.type.startsWith('image/') ? '看一看…' : '读一读…');
   try {
-    const r = await sendPicture(file);
+    const r = await sendFile(file);
     setBusy(false);
     reload();
     await say(r.line, { mood: 'happy' });

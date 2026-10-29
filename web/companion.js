@@ -1595,9 +1595,12 @@ function encodeWav16k(bufs, total, srcRate) {
 // Sends a photo or PDF for the companion to read. Photos are made smaller on the device
 // first (a phone photo is several MB; 2000 px is plenty to read a page). Resolves with
 // what the server made of it.
-export async function sendPicture(file) {
+// A photo or document for the companion: a picture is made smaller first (2000 px is
+// plenty to read), anything else goes as it is and the server works out what it is.
+export async function sendFile(file) {
+  if (file.size > 30_000_000) throw new Error('文件太大了，最多 30 MB');
   let body = file;
-  let type = file.type;
+  let type = file.type || 'application/octet-stream';
   if (type.startsWith('image/')) {
     try {
       const img = await createImageBitmap(file);
@@ -1611,8 +1614,6 @@ export async function sendPicture(file) {
     } catch {
       /* a picture the browser can't draw: send it as it is */
     }
-  } else if (type !== 'application/pdf') {
-    throw new Error('只能发照片或 PDF');
   }
   const res = await fetch(`/api/upload?name=${encodeURIComponent(file.name || '')}`, { method: 'POST', headers: { 'Content-Type': type }, body });
   if (res.status === 401) {

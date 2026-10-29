@@ -1,7 +1,8 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../server/db.js';
@@ -36,11 +37,27 @@ const hub = fakeHub();
 const momHub = fakeHub();
 family.onEvent = () => momHub.send({ type: 'event' });
 
-// What the vision model "sees", set per test.
+// What the models "see" and "read", set per test.
 let picture = null;
 let view = null;
+let reading = null;
+let readArgs = null;
+let ocrCalls = 0;
 const files = new Files(store, dataDir);
-const eyes = new Eyes({ family, store, files, hub, momHub, config, read: async () => picture, look: async () => view });
+const eyes = new Eyes({
+  family, store, files, hub, momHub, config,
+  read: async () => picture,
+  look: async () => view,
+  readDoc: async (args) => {
+    readArgs = args;
+    if (reading instanceof Error) throw reading;
+    return structuredClone(reading);
+  },
+  ocr: async () => {
+    ocrCalls += 1;
+    return '家长会通知\n时间：11月12日 晚上7点';
+  },
+});
 const post = new Post({ family, store, hub, momHub });
 const brain = new Brain(family, { apiKey: 'k' });
 brain.attach({ eyes, post, hub, momHub });
@@ -121,7 +138,7 @@ test("Mom's photo of a timetable replaces the courses; undo puts the old ones ba
   store.setSetting('cycle', { anchorDate: '2026-10-26', anchorDay: 1 });
 });
 
-test('a page of homework is kept in mind for helping, and only images and PDFs are read', async () => {
+test("a page of homework is kept in mind for helping; what isn't a picture or a document is refused", async () => {
   picture = {
     kind: 'homework_page', summary: '数学练习', unsure: '', timetable: null, homework: [],
     page: { subject: '数学', problems: [{ n: '三', text: '6箱粉笔，每箱48盒，一共多少盒？', done: '' }], hint: '想想乘法' },
@@ -130,7 +147,7 @@ test('a page of homework is kept in mind for helping, and only images and PDFs a
   assert.match(r.line, /一共 1 道题/);
   assert.equal(eyes.currentHomework().problems[0].n, '三');
   assert.equal(brain.extras().homework.subject, '数学');
-  assert.equal((await kid.post('/api/upload', 'hello', 'text/plain')).status, 415);
+  assert.equal((await kid.post('/api/upload', Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), 'application/octet-stream')).status, 415);
 });
 
 test('Mom looks in: the tablet is asked, takes a picture, and Mom hears what it shows', async () => {
@@ -265,3 +282,89 @@ test("homework Mom sends is told to MoMo on the tablet", async () => {
   assert.deepEqual(r.changes, ['英语：背单词']);
   assert.match(hub.got.find((e) => e.type === 'say').line, /^MoMo，妈妈把作业发给我啦：英语：背单词。/);
 });
+
+// ---- documents ---------------------------------------------------------------------
+
+const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
+const installed = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`]).status === 0;
+const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const notice = {
+  kind: 'document', summary: '运动会通知', unsure: '', timetable: null, homework: [], page: null, partial: false,
+  doc: { title: '秋季运动会通知', type: '通知', gist: '11月6日在学校操场开秋季运动会。', points: ['穿运动服和运动鞋'], dates: [{ date: '2026-11-06', what: '秋季运动会' }], todo: ['准备水壶和毛巾'], forKid: '学校要开运动会啦！' },
+};
+
+test("Mom's Word notice is read and summed up; she can open its card, save it, and ask about it", async () => {
+  reading = notice;
+  const res = await mom.post('/api/upload?name=运动会通知.docx', fixture('notice.docx'), DOCX);
+  assert.equal(res.status, 200);
+  const r = await res.json();
+  assert.equal(r.kind, 'document');
+  assert.match(readArgs.text, /\n50米跑 \| 8:30 \| 跑道\n/, 'the model read the text, table and all');
+  assert.equal(readArgs.name, '运动会通知.docx');
+  assert.equal(r.line, '我看完了《秋季运动会通知》。11月6日在学校操场开秋季运动会。里面的日子：11月6日秋季运动会。想知道里面的什么，直接问我。');
+
+  const e = (await (await mom.get('/api/parent/feed')).json()).events.find((x) => x.kind === 'document');
+  assert.equal(e.text, '妈妈发来Word文件《秋季运动会通知》：11月6日在学校操场开秋季运动会。');
+  assert.equal(e.doc, true);
+  const card = await (await mom.get(`/api/parent/docs/${e.fileId}`)).json();
+  assert.deepEqual([card.name, card.type, card.doc.title, card.doc.todo[0]], ['运动会通知.docx', 'docx', '秋季运动会通知', '准备水壶和毛巾']);
+  const saved = await mom.get(`/api/parent/files/${e.fileId}?download=1`);
+  assert.equal(saved.headers.get('content-type'), DOCX);
+  assert.match(saved.headers.get('content-disposition'), /^attachment; filename="file.docx"; filename\*=UTF-8''%E8%BF%90%E5%8A%A8/);
+  assert.equal((await kid.get(`/api/parent/docs/${e.fileId}`)).status, 401, "Mom's documents are hers");
+
+  // A short document goes to the model whole when Mom asks about it.
+  const read = brain.runMomTool({ name: 'read_document', args: { doc_id: e.fileId, question: '运动会要穿什么' } });
+  assert.match(read.text, /^《运动会通知.docx》的全文：\n关于举行秋季运动会的通知\n/);
+  assert.match(read.text, /当天穿运动服和运动鞋/);
+  assert.equal(eyes.documents()[0].id, e.fileId);
+  assert.equal(brain.runMomTool({ name: 'read_document', args: { doc_id: 99999, question: '什么' } }).text, '没有这个文件，可能已经过期删除了');
+  assert.equal(eyes.currentDocument(), null, "Mom's document isn't on MoMo's companion's mind");
+});
+
+test("MoMo's slides: what she asks about them is answered from the parts that bear on it", async () => {
+  reading = { ...notice, doc: { ...notice.doc, title: '认识分数', gist: '讲什么是几分之一。', dates: [], forKid: '这是讲分数的课件。' } };
+  const r = await (await kid.post('/api/upload?name=lesson.pptx', fixture('lesson.pptx'), 'application/octet-stream')).json();
+  assert.equal(r.line, '我看完啦！这是讲分数的课件。有不懂的地方，可以问我哦。');
+  assert.equal(eyes.currentDocument().name, 'lesson.pptx', 'known by what is inside, not the type it came with');
+  const { document } = brain.extras('分子在哪里呀');
+  assert.equal(document.title, '认识分数');
+  assert.match(document.excerpt, /分数线上面是分子/);
+});
+
+test('a timetable in an Excel file changes the courses, like a photo of one', async () => {
+  reading = { kind: 'timetable', summary: '课程表', unsure: '', homework: [], page: null, timetable: { cycle: 6, days: [{ day: 1, courses: [{ name: '美术', note: '' }] }] } };
+  const before = store.getCourses();
+  const r = await (await mom.post('/api/upload?name=课表.xlsx', fixture('scores.xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')).json();
+  assert.equal(r.kind, 'timetable');
+  assert.deepEqual(store.getCourses()[1], [{ name: '美术' }]);
+  await mom.post(`/api/parent/undo/${r.undo}`, {});
+  assert.deepEqual(store.getCourses(), before);
+});
+
+test('a scanned PDF is read as pictures: one model call a page, then summed up', { skip: !(installed('pdftotext') && installed('pdftoppm')) && 'poppler is not installed here' }, async () => {
+  picture = { kind: 'other', summary: '一张通知', unsure: '', timetable: null, homework: [], page: null };
+  reading = { ...notice, doc: { ...notice.doc, title: '家长会通知', gist: '11月12日晚上7点开家长会。', dates: [{ date: '2026-11-12', what: '家长会' }] } };
+  ocrCalls = 0;
+  const r = await (await mom.post('/api/upload?name=scan.pdf', fixture('scan.pdf'), 'application/pdf')).json();
+  assert.equal(ocrCalls, 1);
+  assert.equal(readArgs.text, '【第1页】\n家长会通知\n时间：11月12日 晚上7点');
+  assert.match(r.line, /^我看完了《家长会通知》。11月12日晚上7点开家长会。里面的日子：11月12日家长会。/);
+});
+
+test('a file with nothing to read, or that the model could not read, is refused and not kept', async () => {
+  const count = () => store.db.prepare('SELECT COUNT(*) AS n FROM files').get().n;
+  const before = count();
+  const blank = await mom.post('/api/upload?name=空白.txt', Buffer.from('   \n\n    \n'), 'text/plain');
+  assert.equal(blank.status, 415);
+  assert.match((await blank.json()).error, /没有能读的文字/);
+  assert.equal(count(), before);
+  assert.equal((await mom.post('/api/upload?name=a.zip', Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(40)]), 'application/zip')).status, 415);
+  // The model failing: Mom hears so, and the file isn't kept either.
+  reading = new Error('the model is down');
+  const failed = await mom.post('/api/upload?name=story.txt', fixture('story.txt'), 'text/plain');
+  assert.equal(failed.status, 502);
+  assert.equal((await failed.json()).error, '我这会儿没读成这个文件，等一下再发一次吧');
+  assert.equal(count(), before);
+});
+

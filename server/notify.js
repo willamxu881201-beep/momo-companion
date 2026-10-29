@@ -1,5 +1,5 @@
 // Tells Mom's phone what happened while her page was closed: MoMo's messages, what a
-// look-in saw, tasks MoMo says she has finished, photos MoMo sent. Off unless
+// look-in saw, tasks MoMo says she has finished, photos and documents MoMo sent. Off unless
 // NOTIFY_URL is set; the address says which service it is:
 //   Server酱      https://sctapi.ftqq.com/<SendKey>.send  (Server酱³: https://<uid>.push.ft07.com/send/<SendKey>.send)
 //   PushPlus     https://www.pushplus.plus/send?token=<token>
@@ -12,14 +12,15 @@
 // Things that happen close together go out as one message. Nothing is pushed while
 // Mom's page is open (she sees it there), and the log never holds what was said.
 
-const KIND_OF = { message: 'message', check: 'check', done: 'done', photo: 'photo', timetable: 'photo', homework_list: 'photo', homework_page: 'photo' };
+const KIND_OF = { message: 'message', check: 'check', done: 'done', photo: 'photo', timetable: 'photo', homework_list: 'photo', homework_page: 'photo', document: 'photo' };
 const TITLE = {
   message: (kid) => `💬 ${kid}有话跟你说`,
   check: (kid) => `📷 看看${kid}`,
   done: (kid) => `✅ ${kid}做完了，等你确认`,
   photo: (kid) => `🖼️ ${kid}发来照片`,
+  document: (kid) => `📄 ${kid}发来文件`,
 };
-export const NOTIFY_KINDS = Object.keys(TITLE);
+export const NOTIFY_KINDS = ['message', 'check', 'done', 'photo']; // photo: documents too
 
 // The service an address points at, and what to send it.
 export function target(address) {
@@ -102,7 +103,7 @@ export class Notify {
   event(e) {
     const kind = e && e.who !== 'mom' && KIND_OF[e.kind];
     if (!this.target || !kind || !this.kinds.has(kind) || this.looking()) return;
-    this.pending.push({ kind, at: e.at, text: e.text });
+    this.pending.push({ kind, title: TITLE[e.kind] || TITLE[kind], at: e.at, text: e.text });
     if (this.timer) return;
     this.timer = setTimeout(() => this.flush(), this.delayMs);
     this.timer.unref?.();
@@ -119,7 +120,7 @@ export class Notify {
 
   compose(list) {
     const kid = this.family.profile().kidName;
-    if (list.length === 1) return { title: TITLE[list[0].kind](kid), text: list[0].text, link: this.link };
+    if (list.length === 1) return { title: list[0].title(kid), text: list[0].text, link: this.link };
     const hhmm = (ms) => new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: this.family.timeZone });
     return { title: `${kid}的伙伴：${list.length} 条新消息`, text: list.map((x) => `${hhmm(x.at)} ${x.text}`).join('\n'), link: this.link };
   }

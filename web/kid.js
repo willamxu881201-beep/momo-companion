@@ -2,7 +2,7 @@
 // companion herself (stage, voice, listening) lives in companion.js, shared with Mom's page.
 
 import {
-  $, api, app, chime, look, placeBubble, pose, say, sendPicture, setBusy, showCharacters, snapshot, stopSpeaking, wakeUp,
+  $, api, app, chime, look, placeBubble, pose, say, sendFile, setBusy, showCharacters, snapshot, stopSpeaking, wakeUp,
 } from './companion.js';
 
 app.send = send;
@@ -222,9 +222,9 @@ $('photoInput').addEventListener('change', async () => {
   $('photoInput').value = '';
   if (!file) return;
   stopSpeaking();
-  setBusy(true, '看一看…');
+  setBusy(true, file.type.startsWith('image/') ? '看一看…' : '读一读…');
   try {
-    const r = await sendPicture(file);
+    const r = await sendFile(file);
     if (r.state) render(r.state);
     setBusy(false);
     await say(r.line, { mood: 'happy' });

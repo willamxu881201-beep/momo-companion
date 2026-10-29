@@ -46,7 +46,7 @@ new Scheduler(family, hub, { post, files }).start();
 
 const handler = createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, notify, webDir: join(root, 'web') });
 const server = createServer(handler);
-server.requestTimeout = 60000;
+server.requestTimeout = 180000; // a big document over a slow phone line
 server.listen(config.port, config.host, () => {
   const missing = [
     !config.arkApiKey && 'ARK_API_KEY',

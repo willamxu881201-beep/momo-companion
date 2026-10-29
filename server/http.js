@@ -9,6 +9,8 @@ import { addDays, dateZh, isDate, nowIn, timeToMinutes } from './dates.js';
 import { KID_COOKIE, KID_TTL_S, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
 import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
 import { inQuiet } from './events.js';
+import { MIME_EXT } from './files.js';
+import { PART_ZH, TYPE_ZH } from './extract.js';
 import { ARK_ORIGIN } from './ark.js';
 import { warm } from './client.js';
 import { Clip, PCM_RATE, SPEECH_ORIGIN, synthesizeStream, transcribe, transcribeFlash, wavRms, wavSeconds } from './speech.js';
@@ -38,7 +40,6 @@ class HttpError extends Error {
   }
 }
 
-const UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
 export function createHandler({
   config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, webDir,
@@ -122,19 +123,19 @@ export function createHandler({
     return { ...r, state: kidState() };
   });
 
-  // A photo or file for the companion to read (from MoMo's page or Mom's). The body is
-  // the file itself; ?name= is its name. She acts on it and says what she did.
+  // A photo or document for the companion to read (from MoMo's page or Mom's): a
+  // picture, PDF, Word, Excel, PPT or text file. The body is the file itself; ?name= is
+  // its name. She acts on it and says what she did.
   on('POST', '/api/upload', 'kid', async (ctx) => {
     const mime = String(ctx.req.headers['content-type'] || '').split(';')[0].trim();
-    if (!UPLOAD_TYPES.has(mime)) throw new HttpError(415, '只能发照片（JPG、PNG）或 PDF');
-    if (ctx.body.length < 100) throw new HttpError(400, '文件是空的');
+    if (ctx.body.length < 10) throw new HttpError(400, '文件是空的');
     const who = ctx.kid ? 'kid' : 'mom';
     const t0 = Date.now();
     const r = await need(eyes, '看照片').take({ who, mime, name: ctx.url.searchParams.get('name') || '', buf: ctx.body });
-    console.log(`[eyes] ${who} sent ${mime} ${Math.round(ctx.body.length / 1024)} KB: ${r.kind}, ${r.changes.length} changes, ${Date.now() - t0} ms`);
+    console.log(`[eyes] ${who} sent ${Math.round(ctx.body.length / 1024)} KB: ${r.kind}, ${r.changes.length} changes, ${Date.now() - t0} ms`);
     speech(r.line);
     return { ...r, state: kidState() };
-  }, { raw: 12_000_000 });
+  }, { raw: 30_000_000 });
 
   // The tablet's answer to a check-in: { image: JPEG base64, wav?: base64, error? }.
   on('POST', '/api/checks/:id', 'kid', (ctx) => {
@@ -269,18 +270,32 @@ export function createHandler({
   on('GET', '/api/parent/feed', 'parent', (ctx) => {
     const date = isDate(ctx.url.searchParams.get('date')) ? ctx.url.searchParams.get('date') : family.now().date;
     const events = store.listEvents(date, 80).map((e) => ({
-      id: e.id, at: e.at, who: e.who, kind: e.kind, text: e.text, fileId: e.file_id,
+      id: e.id, at: e.at, who: e.who, kind: e.kind, text: e.text, fileId: e.file_kind ? e.file_id : null, doc: e.file_kind === 'doc',
       undo: Boolean(e.data && (e.data.courses || (e.data.added && e.data.added.length)) && !e.data.undone),
       undone: Boolean(e.data && e.data.undone),
     }));
     return { date, events, unread: post ? post.unreadForMom() : [] };
   });
 
-  // A photo, for Mom's eyes only.
+  // A photo or document, for Mom's eyes only; ?download=1 saves it under its own name.
   on('GET', '/api/parent/files/:id', 'parent', (ctx) => {
     const f = need(files, '照片').read(Number(ctx.params.id));
-    if (!f) throw new HttpError(404, '照片已经过期删除了');
-    return { status: 200, type: f.file.mime, body: f.buf, private: true };
+    if (!f) throw new HttpError(404, '这个文件已经过期删除了');
+    const name = f.file.name || `文件${f.file.id}.${MIME_EXT[f.file.mime] || 'bin'}`;
+    const headers = ctx.url.searchParams.get('download') ? { 'Content-Disposition': `attachment; filename="file.${MIME_EXT[f.file.mime] || 'bin'}"; filename*=UTF-8''${encodeURIComponent(name)}` } : {};
+    return { status: 200, type: f.file.mime, body: f.buf, private: true, headers };
+  });
+
+  // What the companion made of a document: its title, gist, points, dates, things to do.
+  on('GET', '/api/parent/docs/:id', 'parent', (ctx) => {
+    const d = need(eyes, '文件').document(ctx.params.id);
+    if (!d) throw new HttpError(404, '这个文件已经过期删除了');
+    const r = d.result;
+    const doc = r.doc ? { ...r.doc, dates: r.doc.dates.map((x) => ({ ...x, dateZh: dateZh(x.date) })) } : null;
+    return {
+      id: d.id, at: d.at, who: d.who, name: d.name, type: d.type, typeZh: TYPE_ZH[d.type] || '', size: d.parts > 1 && PART_ZH[d.type] ? `${d.parts} ${PART_ZH[d.type]}` : '',
+      kind: r.kind, summary: r.summary, doc, cut: Boolean(r.cut || r.partial), chars: d.text.length,
+    };
   });
 
   // Takes back what a photo changed: the old timetable, or the homework tasks it added.
@@ -587,7 +602,7 @@ export function createHandler({
         return;
       }
       if (out && out.status && (out.body || out.status === 204)) {
-        res.writeHead(out.status, out.body ? { 'Content-Type': out.type, 'Content-Length': out.body.length, 'Cache-Control': out.private ? 'private, max-age=3600' : 'no-store' } : {});
+        res.writeHead(out.status, out.body ? { 'Content-Type': out.type, 'Content-Length': out.body.length, 'Cache-Control': out.private ? 'private, max-age=3600' : 'no-store', ...out.headers } : {});
         res.end(out.body);
         return;
       }

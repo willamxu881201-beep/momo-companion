@@ -1,21 +1,30 @@
-// The companion's eyes: photos and files people send her, and check-ins where the
+// The companion's eyes: photos and documents people send her, and check-ins where the
 // tablet's camera looks at MoMo because Mom asked.
 //  - A photo is read (vision.js) and acted on: a timetable replaces the courses, the
 //    teacher's homework list becomes today's tasks (both can be undone from Mom's
 //    page), a page of homework is kept in mind for an hour or two so the companion
 //    can help MoMo with it.
+//  - A document (Word, Excel, PPT, PDF, text) is turned into text (extract.js) and
+//    read (docs.js): a timetable or homework list in it is acted on like a photo of
+//    one; anything else is summed up, and its text is kept with the file so questions
+//    about it are answered from it later (Mom's, any time in the month it is kept;
+//    MoMo's, about the one she sent lately). A scan, or a document of screenshots,
+//    is read as pictures first.
 //  - A check-in asks the tablet for a snapshot (and, for the piano, a few seconds of
 //    sound). The tablet says out loud that it is taking it. What the picture shows goes
 //    to Mom's page; a poor writing posture gets a gentle word to MoMo too.
-// Everything lands in the day's record. Pictures are kept a week (files.js).
+// Everything lands in the day's record. Photos are kept a week, documents a month (files.js).
 
 import { randomBytes } from 'node:crypto';
-import { pdfPages } from './files.js';
-import { lookAt, readPicture } from './vision.js';
+import { DOC_DAYS, pdfPages } from './files.js';
+import { lookAt, readPicture, transcribe } from './vision.js';
+import { PART_ZH, TYPE_ZH, detect, extract, visible } from './extract.js';
+import { readDocument } from './docs.js';
 import { addDays, dateZh } from './dates.js';
 import { inQuiet } from './events.js';
 
-const HOMEWORK_TTL_MS = 3 * 3600000;
+const HOMEWORK_TTL_MS = 3 * 3600000; // how long what MoMo just showed stays on the companion's mind
+const SCAN_PAGES = 9; // pages of a scanned PDF read, at most
 const CHECK_WAIT_MS = 60000;
 export const CHECK_WHAT = { look: '看看在做什么', piano: '看看在不在练琴', posture: '看看坐姿' };
 const CHECK_LINES = {
@@ -25,10 +34,25 @@ const CHECK_LINES = {
 };
 
 const dataUrl = (mime, buf) => `data:${mime};base64,${buf.toString('base64')}`;
+const refuse = (status, message) => Object.assign(new Error(message), { status });
+
+// Runs fn over the items, at most n at a time; results in order.
+async function inTurns(items, n, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  }));
+  return out;
+}
 
 export class Eyes {
-  constructor({ family, store, files, hub, momHub, config, read = readPicture, look = lookAt, pdf = pdfPages }) {
-    Object.assign(this, { family, store, files, hub, momHub, config, read, look, pdf });
+  // read, readDoc, ocr, look, pdf, text: the model calls and file readers (stand-ins in tests).
+  constructor({ family, store, files, hub, momHub, config, read = readPicture, readDoc = readDocument, ocr = transcribe, look = lookAt, pdf = pdfPages, text = extract }) {
+    Object.assign(this, { family, store, files, hub, momHub, config, read, readDoc, ocr, look, pdf, text });
     this.homework = null;
     this.checks = new Map();
   }
@@ -37,42 +61,114 @@ export class Eyes {
     return this.family.profile().kidName;
   }
 
-  overLimit() {
+  // kind: 'vision' (photos, check-ins) or 'docs'. Counts one use, unless over the day's limit.
+  overLimit(kind = 'vision') {
     const today = this.family.now().date;
-    if (this.store.usage(today, 'vision') >= this.config.limits.visionPerDay) return true;
-    this.store.addUsage(today, 'vision');
+    const limit = kind === 'docs' ? this.config.limits.docsPerDay ?? 30 : this.config.limits.visionPerDay;
+    if (this.store.usage(today, kind) >= limit) return true;
+    this.store.addUsage(today, kind);
     return false;
   }
 
-  // ---- photos and files --------------------------------------------------------
+  // ---- photos and documents ------------------------------------------------------
 
   // who: kid | mom. Returns what was seen, what changed, the event to undo it by, and
   // a line for the companion to say.
-  async take({ who, mime, name = '', buf }) {
-    if (this.overLimit()) throw Object.assign(new Error('今天看的照片太多啦，明天再发吧'), { status: 429 });
-    const fileId = this.files.save({ who, kind: 'photo', mime, name, buf });
-    let images;
-    if (mime === 'application/pdf') {
-      try {
-        images = (await this.pdf(buf)).map((b) => dataUrl('image/jpeg', b));
-      } catch (err) {
-        throw Object.assign(new Error(err.missing ? '服务器还不能读 PDF，请拍照或截图发过来' : '这个 PDF 打不开'), { status: 415 });
-      }
-      if (!images.length) throw Object.assign(new Error('这个 PDF 是空的'), { status: 415 });
-    } else images = [dataUrl(mime, buf)];
+  async take({ who, mime = '', name = '', buf }) {
+    const kind = detect(buf, name, mime);
+    if (!kind) throw refuse(415, '这种文件我还看不懂，可以发照片、PDF、Word、Excel、PPT 或者文本文件');
+    return kind.type === 'image' ? this.takePicture({ who, mime: kind.mime, name, buf }) : this.takeDocument({ who, kind, name, buf });
+  }
 
+  async takePicture({ who, mime, name, buf }) {
+    if (this.overLimit()) throw refuse(429, '今天看的照片太多啦，明天再发吧');
+    const fileId = this.files.save({ who, kind: 'photo', mime, name, buf });
+    const r = await this.readPictures([dataUrl(mime, buf)]);
+    this.store.setFileResult(fileId, r);
+    return this.act({ who, fileId, r });
+  }
+
+  async takeDocument({ who, kind, name, buf }) {
+    if (this.overLimit('docs')) throw refuse(429, '今天看的文件太多啦，明天再发吧');
+    let doc;
+    try {
+      doc = await this.text(buf, kind);
+    } catch (err) {
+      console.error(`[eyes] could not read a ${kind.type}:`, err.message);
+      if (err.missing) throw refuse(415, kind.type === 'pdf' ? '服务器还不能读 PDF，请拍照或截图发过来' : '服务器还不能读这种旧格式的文件，请另存为 docx、xlsx、pptx 或 PDF 再发');
+      throw refuse(415, err.locked ? '这个文件有密码，打不开' : '这个文件打不开，可能已经坏了');
+    }
+    const fileId = this.files.save({ who, kind: 'doc', mime: kind.mime, name, buf, days: DOC_DAYS });
+    let r;
+    let ocred = 0;
+    try {
+      ({ r, ocred } = await this.readDocText({ kind, buf, doc, name }));
+    } catch (err) {
+      this.forget(fileId); // nothing was made of it: it isn't kept
+      if (err.status) throw err;
+      console.error('[eyes] reading a document failed:', err.message);
+      throw refuse(502, '我这会儿没读成这个文件，等一下再发一次吧');
+    }
+    Object.assign(r, { type: kind.type, parts: ocred || doc.parts, cut: doc.cut || (ocred && doc.parts > ocred) || false });
+    this.store.setFileText(fileId, doc.text);
+    this.store.setFileResult(fileId, r);
+    return this.act({ who, fileId, r, name });
+  }
+
+  // What the models make of a document's text (doc.text is replaced by what is read off
+  // its pictures, for a scan). Returns { r, ocred: how many pages were read as pictures }.
+  async readDocText({ kind, buf, doc, name }) {
+    let r = null;
+    let ocred = 0;
+    // Hardly any text: a scan, or screenshots pasted into a document. Its pages are
+    // pictures, and a picture of a timetable or homework reads best as a picture.
+    if (visible(doc.text) < 40) {
+      let images = [];
+      try {
+        images = kind.type === 'pdf'
+          ? (await this.pdf(buf, { pages: SCAN_PAGES, dpi: 110 })).map((b) => dataUrl('image/jpeg', b))
+          : doc.pictures.slice(0, SCAN_PAGES).map((p) => dataUrl(p.mime, p.buf));
+      } catch (err) {
+        console.error('[eyes] could not draw the pages:', err.message);
+      }
+      if (!images.length) throw refuse(415, '这个文件里没有能读的文字');
+      if (images.length <= 2) {
+        r = await this.readPictures(images);
+        if (r.kind === 'other') r = null;
+      }
+      if (!r) {
+        let failed = 0;
+        const pages = await inTurns(images, 3, (image) => this.ocr({ apiKey: this.config.arkApiKey, model: this.config.visionModel, image }).catch(() => {
+          failed += 1;
+          return '';
+        }));
+        if (failed === pages.length) throw new Error('every page failed to be read');
+        doc.text = pages.map((t, i) => `【第${i + 1}页】\n${t}`).join('\n');
+        ocred = pages.length;
+        if (visible(doc.text) < 10) throw refuse(415, '这个文件里没有能读的文字');
+      }
+    }
+    if (!r) {
+      const now = this.family.now();
+      r = await this.readDoc({ apiKey: this.config.arkApiKey, model: this.config.docModel || this.config.visionModel, text: doc.text, name, kidName: this.kid(), today: now.date, tomorrow: addDays(now.date, 1) });
+    }
+    return { r, ocred };
+  }
+
+  readPictures(images) {
+    const now = this.family.now();
+    return this.read({ apiKey: this.config.arkApiKey, model: this.config.visionModel, images, kidName: this.kid(), today: now.date, tomorrow: addDays(now.date, 1) });
+  }
+
+  // A file that turned out to have nothing in it to read is not kept.
+  forget(fileId) {
+    this.files.remove(fileId);
+  }
+
+  // Does what a photo or document asks for, records it, and says so.
+  act({ who, fileId, r, name = '' }) {
     const now = this.family.now();
     const kid = this.kid();
-    const r = await this.read({
-      apiKey: this.config.arkApiKey,
-      model: this.config.visionModel,
-      images,
-      kidName: kid,
-      today: now.date,
-      tomorrow: addDays(now.date, 1),
-    });
-    this.store.setFileResult(fileId, r);
-
     const out = { fileId, kind: r.kind, summary: r.summary, unsure: r.unsure, changes: [], undo: null };
     let data = null;
     if (r.kind === 'timetable' && r.timetable) {
@@ -88,13 +184,17 @@ export class Eyes {
     } else if (r.kind === 'homework_page' && r.page) {
       this.homework = { at: Date.now(), page: r.page, fileId };
       out.page = r.page;
+    } else if (r.kind === 'document') {
+      out.doc = r.doc;
     }
     const by = who === 'kid' ? kid : '妈妈';
+    const file = r.type ? `${TYPE_ZH[r.type] || ''}文件` : '照片';
     const what = {
       timetable: `${by}发来课程表，已更新 ${out.changes.length} 天的课${out.cycle ? `；一轮从 ${out.cycle.from} 天变成 ${out.cycle.to} 天，请到「管理 → 课表」核对今天是 D 几` : ''}`,
       homework_list: out.changes.length ? `${by}发来作业清单，加了 ${out.changes.length} 件作业：${out.changes.join('、')}` : `${by}发来作业清单，里面的作业都已经在任务里了`,
       homework_page: `${by}拍了作业：${r.summary}`,
-      other: `${by}发来照片：${r.summary}`,
+      document: `${by}发来${file}《${r.doc ? r.doc.title : name}》：${r.doc && r.doc.gist ? r.doc.gist : r.summary}`,
+      other: `${by}发来${file}：${r.summary}`,
     }[r.kind];
     const eventId = this.family.log(who, r.kind === 'other' ? 'photo' : r.kind, what, { fileId, data });
     if (data) out.undo = eventId;
@@ -126,6 +226,15 @@ export class Eyes {
           ? `我看到啦，是${r.page.subject || ''}作业${n ? `，一共 ${n} 道题` : ''}。哪道题不会，就跟我说是第几题，我们一起想！`
           : `这是一页${r.page.subject || ''}作业${n ? `，${n} 道题` : ''}。${kid}问我的时候，我会一步一步引导她，不直接给答案。`;
       }
+      case 'document': {
+        const d = r.doc;
+        if (toKid) return `我看完啦！${d.forKid || d.gist || d.title}有不懂的地方，可以问我哦。`;
+        const size = r.parts > 1 && PART_ZH[r.type] ? `（${r.parts} ${PART_ZH[r.type]}）` : '';
+        // A couple of dates are worth saying out loud; the rest are on the document's card.
+        const dates = d.dates.length ? `里面的日子：${d.dates.slice(0, 2).map((x) => `${dateZh(x.date).replace(/ .*/, '')}${x.what}`).join('，')}${d.dates.length > 2 ? '，还有几个写在卡片上' : ''}。` : '';
+        const long = r.partial || r.cut ? '文件很长，我先看了开头和结尾，您问到哪儿我再翻原文。' : '';
+        return `我看完了《${d.title}》${size}。${d.gist}${dates}${long}想知道里面的什么，直接问我。`;
+      }
       default:
         return toKid ? `我看到了：${r.summary}。` : `我看了一下：${r.summary}。`;
     }
@@ -134,6 +243,27 @@ export class Eyes {
   // The page of homework MoMo showed lately, while it is fresh.
   currentHomework() {
     return this.homework && Date.now() - this.homework.at < HOMEWORK_TTL_MS ? this.homework.page : null;
+  }
+
+  // ---- documents, for answering from ---------------------------------------------
+
+  // Documents still kept, newest first: { id, at, who, name, type, parts, result }.
+  // who: only those this person sent.
+  documents({ who = null, since = Date.now() - DOC_DAYS * 86400000, limit = 8 } = {}) {
+    return this.store.listDocs({ since, who, limit }).filter((d) => d.result).map((d) => ({ ...d, type: d.result.type, parts: d.result.parts }));
+  }
+
+  // One document with its text, or null when it is gone.
+  document(id) {
+    const f = this.store.getFile(Number(id));
+    if (!f || f.kind !== 'doc' || !f.result) return null;
+    return { id: f.id, at: f.at, who: f.who, name: f.name, type: f.result.type, parts: f.result.parts, result: f.result, text: this.store.getFileText(f.id) || '' };
+  }
+
+  // The document MoMo sent lately (not a timetable or homework: those are acted on), while fresh.
+  currentDocument() {
+    const [d] = this.documents({ who: 'kid', since: Date.now() - HOMEWORK_TTL_MS, limit: 1 });
+    return d && d.result.kind === 'document' ? this.document(d.id) : null;
   }
 
   // ---- check-ins -----------------------------------------------------------------

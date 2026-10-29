@@ -1,8 +1,8 @@
 // SQLite storage (node:sqlite, no native modules). One file holds the family's
 // data: timetable, tasks, alarms, affinity ledger, settings, the day's events (what
 // happened, in a line each, for Mom), messages passed between Mom and MoMo, and the
-// list of photos kept for a few days (the pictures themselves are files, see
-// files.js). Nothing the child says to the companion is stored; chat history lives
+// list of photos and documents kept for a while (the files themselves are on disk, see
+// files.js; a document's text is kept here with it). Nothing the child says to the companion is stored; chat history lives
 // in memory only (see brain.js).
 
 import { DatabaseSync } from 'node:sqlite';
@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS messages (
 // Columns added after the first release, for databases made before them.
 const COLUMNS = {
   task_instances: { note: "TEXT NOT NULL DEFAULT ''", source: 'TEXT' },
+  files: { text: 'TEXT' },
 };
 
 export const DEFAULT_SETTINGS = {
@@ -342,6 +343,23 @@ export class Store {
     this.db.prepare('UPDATE files SET result = ? WHERE id = ?').run(JSON.stringify(result), id);
   }
 
+  setFileText(id, text) {
+    this.db.prepare('UPDATE files SET text = ? WHERE id = ?').run(text, id);
+  }
+
+  getFileText(id) {
+    const r = this.db.prepare('SELECT text FROM files WHERE id = ?').get(id);
+    return r ? r.text || '' : null;
+  }
+
+  // Documents (not photos), newest first, from `since` (ms) on; who: only theirs.
+  listDocs({ since = 0, who = null, limit = 8 } = {}) {
+    return this.db
+      .prepare(`SELECT id, at, who, mime, name, bytes, result, length(text) AS chars FROM files WHERE kind = 'doc' AND at >= ?${who ? ' AND who = ?' : ''} ORDER BY at DESC, id DESC LIMIT ?`)
+      .all(...[since, who, limit].filter((v) => v !== null))
+      .map((f) => ({ ...f, result: f.result ? JSON.parse(f.result) : null }));
+  }
+
   expiredFiles(now = Date.now()) {
     return this.db.prepare('SELECT id, path FROM files WHERE expires < ?').all(now).map(plain);
   }
@@ -370,9 +388,10 @@ export class Store {
     this.db.prepare('UPDATE events SET data = ? WHERE id = ?').run(JSON.stringify(data), id);
   }
 
+  // file_kind: photo, check or doc, for events with a file still kept.
   listEvents(date, limit = 60) {
     return this.db
-      .prepare('SELECT * FROM events WHERE date = ? ORDER BY at DESC, id DESC LIMIT ?')
+      .prepare('SELECT e.*, f.kind AS file_kind FROM events e LEFT JOIN files f ON f.id = e.file_id WHERE e.date = ? ORDER BY e.at DESC, e.id DESC LIMIT ?')
       .all(date, limit)
       .map((e) => ({ ...e, data: e.data ? JSON.parse(e.data) : null }));
   }

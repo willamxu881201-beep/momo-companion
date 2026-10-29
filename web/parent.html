@@ -93,9 +93,9 @@
     </form>
     <div class="talk">
       <button id="mic" class="mic" type="button">按一下说话</button>
-      <button id="photoBtn" class="ghost glass round" type="button" aria-label="发照片或文件：课程表、作业">📷</button>
+      <button id="photoBtn" class="ghost glass round" type="button" aria-label="发照片或文件：课程表、作业、通知、成绩单、课件">📎</button>
       <button id="kbd" class="ghost glass round" type="button">打字</button>
-      <input id="photoInput" type="file" accept="image/*,application/pdf" hidden>
+      <input id="photoInput" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.wps,.et,.dps,.rtf,.txt,.md,.csv,application/pdf,application/msword,application/vnd.ms-excel,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv" hidden>
     </div>
   </div>
 </main>
@@ -105,6 +105,20 @@
     <img id="photoImg" alt="">
     <p id="photoText"></p>
     <button id="photoClose" class="ghost" type="button">关闭</button>
+  </div>
+</div>
+
+<div id="docSheet" class="sheet" hidden>
+  <div class="sheet-card doc-card" role="dialog" aria-labelledby="docTitle">
+    <h2 id="docTitle"></h2>
+    <p id="docMeta" class="meta"></p>
+    <p id="docGist" class="gist"></p>
+    <div id="docMore"></div>
+    <div class="row">
+      <a id="docSave" class="ghost" href="#" download>保存原文件</a>
+      <button id="docAsk" class="ghost" type="button">问问伙伴</button>
+      <button id="docClose" type="button">关闭</button>
+    </div>
   </div>
 </div>
 

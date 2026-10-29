@@ -39,12 +39,21 @@ id momo >/dev/null 2>&1 || useradd --system --home "$DATA_DIR" --shell /usr/sbin
 mkdir -p "$DATA_DIR" "$ENV_DIR"
 chown momo:momo "$DATA_DIR"
 chmod 700 "$DATA_DIR"
-# 读 PDF（比如课程表文件）要用 poppler 的 pdftoppm；拍照和截图用不到它。
-if ! command -v pdftoppm >/dev/null; then
-  echo "   安装 poppler-utils（读 PDF 用）"
+# 读文件用到的程序：PDF 用 poppler（pdftotext、pdftoppm）；doc、xls、ppt 这些旧格式和 WPS
+# 的文件先用 LibreOffice 转成新格式（不带界面的版本，约 300 MB）。docx、xlsx、pptx 和文本
+# 不用装任何东西；拍照和截图也用不到它们。
+apt_get() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get install -y -qq poppler-utils >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq poppler-utils >/dev/null 2>&1; } ||
-    echo "   没装上 poppler-utils：发 PDF 会读不了，拍照和截图不受影响"
+  apt-get install -y -qq --no-install-recommends "$@" >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends "$@" >/dev/null 2>&1; }
+}
+if ! command -v pdftotext >/dev/null || ! command -v pdftoppm >/dev/null; then
+  echo "   安装 poppler-utils（读 PDF 用）"
+  apt_get poppler-utils || echo "   没装上 poppler-utils：发 PDF 会读不了，其他文件不受影响"
+fi
+if ! command -v soffice >/dev/null; then
+  echo "   安装 LibreOffice（读 doc、xls、ppt 等旧格式用，要几分钟）"
+  apt_get libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui ||
+    echo "   没装上 LibreOffice：旧格式的文件会读不了，docx、xlsx、pptx、PDF 不受影响"
 fi
 
 echo "== 2/5 配置文件 $ENV_FILE"

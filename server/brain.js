@@ -3,10 +3,11 @@
 //     another day's timetable, mark a task done, set an alarm, or pass a word to Mom;
 //  2. the character model (doubao-seed-character, no tool calling) speaks, reading
 //     only the facts and the results of step 1, plus the page of homework MoMo just
-//     showed her (to help without giving answers away) and Mom's recent messages.
-// With Mom (momReply), the router model alone: it looks things up, asks the tablet to
-// look at MoMo, passes messages, adds and confirms tasks, then answers in the
-// companion's voice.
+//     showed her (to help without giving answers away), the parts of a document MoMo
+//     just sent that bear on what she said, and Mom's recent messages.
+// With Mom (momReply), the router model alone: it looks things up, reads the documents
+// sent lately, asks the tablet to look at MoMo, passes messages, adds and confirms
+// tasks, then answers in the companion's voice.
 // Dates and timetable facts always come from our data, never from the model.
 // Conversation history is kept in memory for a few minutes and never saved.
 
@@ -15,6 +16,8 @@ import { STAGE_LOOKS } from './characters.js';
 import { addDays, dateZh, isDate, nowIn, timeToMinutes, weekdayZh } from './dates.js';
 import { inQuiet } from './events.js';
 import { CHECK_WHAT } from './eyes.js';
+import { aboutDoc, excerpts } from './docs.js';
+import { PART_ZH, TYPE_ZH } from './extract.js';
 
 const HISTORY_TURNS = 3;
 const HISTORY_TTL_MS = 20 * 60 * 1000;
@@ -96,6 +99,12 @@ const MOM_TOOLS = [
   ),
   fn('tell_kid', '把妈妈的话转告给孩子（平板上会说出来）。', { text: { type: 'string', description: '要转告的话，口语、温和' } }, ['text']),
   fn(
+    'read_document',
+    '读一个文件的原文（Word、Excel、PPT、PDF 等，编号见【最近的文件】），找出和问题有关的部分。回答文件里的内容、总结或分析文件之前先调用。',
+    { doc_id: { type: 'integer', description: '【最近的文件】里的 doc 编号' }, question: { type: 'string', description: '妈妈想知道什么，用来在原文里找' } },
+    ['doc_id', 'question'],
+  ),
+  fn(
     'add_task',
     '给孩子加一件任务或作业。',
     {
@@ -164,7 +173,7 @@ export class Brain {
         apiKey: this.apiKey,
         model: this.personaModel,
         messages: [
-          { role: 'system', content: personaPrompt(this.family, facts, done, this.extras()) },
+          { role: 'system', content: personaPrompt(this.family, facts, done, this.extras(userText)) },
           ...history,
           { role: 'user', content: userText },
         ],
@@ -271,10 +280,16 @@ export class Brain {
     }
   }
 
-  // Homework MoMo just showed, and what Mom asked to pass on lately.
-  extras() {
+  // Homework MoMo just showed, the parts of a document she just sent that bear on what
+  // she said (userText), and what Mom asked to pass on lately.
+  extras(userText = '') {
     const { eyes, post } = this.helpers;
-    return { homework: eyes ? eyes.currentHomework() : null, notes: post ? post.recentForKid() : [] };
+    const doc = eyes ? eyes.currentDocument() : null;
+    return {
+      homework: eyes ? eyes.currentHomework() : null,
+      notes: post ? post.recentForKid() : [],
+      document: doc ? { title: doc.result.doc.title, gist: doc.result.doc.gist, excerpt: excerpts(doc.text, userText, 1500).text } : null,
+    };
   }
 
   // ---- with Mom --------------------------------------------------------------------
@@ -289,7 +304,7 @@ export class Brain {
     for (let round = 0; round < 3 && !reply; round += 1) {
       let r;
       try {
-        r = await arkChat({ apiKey: this.apiKey, model: this.routerModel, messages, tools: round < 2 ? MOM_TOOLS : undefined, maxTokens: 300 });
+        r = await arkChat({ apiKey: this.apiKey, model: this.routerModel, messages, tools: round < 2 ? MOM_TOOLS : undefined, maxTokens: 600 });
       } catch (err) {
         console.error('[brain] mom reply failed:', err.message);
         break;
@@ -334,6 +349,16 @@ export class Brain {
         if (!eyes) return { text: '现在看不了' };
         const r = eyes.check(a.what);
         return { text: r.text, action: r.ok ? { type: 'check', id: r.id, what: a.what } : null };
+      }
+      case 'read_document': {
+        const d = eyes && eyes.document(a.doc_id);
+        if (!d) return { text: '没有这个文件，可能已经过期删除了' };
+        const ex = excerpts(d.text, String(a.question || ''), 8000);
+        return {
+          text: ex.whole
+            ? `《${d.name || '文件'}》的全文：\n${ex.text}`
+            : `《${d.name || '文件'}》里和问题最有关的部分（不是全文，【】或（）里是页、表或幻灯片）：\n${ex.text}\n\n这个文件的概要：\n${aboutDoc(d.result)}`,
+        };
       }
       case 'tell_kid': {
         if (!post) return { text: '现在传不了话' };
@@ -396,18 +421,25 @@ function dayText(family, date) {
   return `${dateZh(date)}：${courses}。任务：${list}`;
 }
 
-function momPrompt(family, { hub, post } = {}) {
+// "10月29日 16:05"
+const when = (family, ms) => {
+  const t = nowIn(family.timeZone, new Date(ms));
+  return `${dateZh(t.date).replace(/ .*/, '')} ${t.time}`;
+};
+
+function momPrompt(family, { hub, post, eyes } = {}) {
   const snap = family.snapshot();
   const { kidName: kid, girlInfo: g } = snap.profile;
   const today = snap.now.date;
   const events = family.store.listEvents(today, 15).reverse();
   const quiet = family.store.getSetting('quiet');
   const unread = post ? post.store.undelivered('kid') : [];
+  const docs = eyes ? eyes.documents({ limit: 8 }) : [];
   return [
     `你是「${g.name}」，${kid}的 AI 伙伴。现在跟你说话的是${kid}的妈妈，不是孩子。`,
-    `说话亲切、简洁、有条理，像一个靠谱的小助理，带一点你自己的性格（${g.style}）。每次 1 到 4 句，不超过 100 字。不用表情符号、列表和 markdown，你说的话会被念出来。`,
+    `说话亲切、简洁、有条理，像一个靠谱的小助理，带一点你自己的性格（${g.style}）。平时每次 1 到 4 句，不超过 100 字（总结、分析文件见第 8 条）。不用表情符号、列表和 markdown，你说的话会被念出来。`,
     '',
-    '你能做的：查课程和任务；查今天发生的事；让平板现在拍张照片看看孩子在做什么、在不在练琴、坐姿对不对；把妈妈的话转告给孩子；给孩子加任务；确认任务；定闹钟。',
+    '你能做的：查课程和任务；查今天发生的事；读妈妈和孩子发来的文件（Word、Excel、PPT、PDF 等），回答里面的内容、做总结和分析；让平板现在拍张照片看看孩子在做什么、在不在练琴、坐姿对不对；把妈妈的话转告给孩子；给孩子加任务；确认任务；定闹钟。',
     '规则：',
     '1. 事实只依据下面的【资料】和工具结果，不编造。不知道就直说，并建议怎么办（比如让平板看一眼）。',
     '2. 妈妈问孩子现在在干什么、练没练琴、坐姿怎么样：记录里 15 分钟内有对应的查看结果就直接说；没有就调用 check_kid。check_kid 只是让平板去拍，结果稍后会单独告诉妈妈，你只要说一句"我去看看"之类的话。',
@@ -416,6 +448,7 @@ function momPrompt(family, { hub, post } = {}) {
     `5. ${kid}和你的聊天不会保存，你不知道聊天原话；问到就说只记录做了什么事。`,
     `6. 说到${kid}时要友善，不夸大问题、不给孩子贴标签。`,
     '7. 只答应你做得到的事：你不会一直盯着孩子，也不会自己发现她什么时候练完琴、写完作业（要看就得让平板拍一张），所以别说“我会盯着她”。孩子说做完了、发了照片、让你传话，妈妈的页面会马上收到。',
+    '8. 妈妈问到文件里的内容、让你总结或分析文件：先调用 read_document（doc_id 见【最近的文件】，没说是哪个就用最新的），只依据读到的原文回答，原文里没有就直说；可以说在第几页、哪张表、第几张幻灯片。总结和分析先说结论，可以说得长一些，但不超过 200 字。文件里提到的日子和要做的事，妈妈想要的话可以用 add_task 加成任务。',
     '',
     '【资料】',
     `现在：${dateZh(today)} ${snap.now.time}。平板${hub && hub.size ? '开着' : '现在没打开'}。安静时间 ${quiet.start}–${quiet.end}。`,
@@ -426,6 +459,12 @@ function momPrompt(family, { hub, post } = {}) {
     unread.length ? `还没转告给孩子的话：${unread.map((m) => m.text).join('；')}` : '',
     '今天的记录（从早到晚）：',
     events.length ? events.map((e) => `${clock(family, e.at)} ${e.text}`).join('\n') : '（还没有）',
+    docs.length ? '【最近的文件】（新的在前，内容要用 read_document 读）' : '',
+    ...docs.map((d) => {
+      const size = d.parts > 1 && PART_ZH[d.type] ? `，${d.parts} ${PART_ZH[d.type]}` : '';
+      const gist = (d.result.doc && d.result.doc.gist) || d.result.summary || '';
+      return `[doc=${d.id}] ${when(family, d.at)} ${d.who === 'kid' ? kid : '妈妈'}发来的${TYPE_ZH[d.type] || ''}文件《${d.name || (d.result.doc && d.result.doc.title) || '文件'}》${size}：${gist}`;
+    }),
     '',
     `可以查看的：${Object.entries(CHECK_WHAT).map(([k, v]) => `${k}=${v}`).join('，')}`,
   ]
@@ -451,7 +490,7 @@ function routerPrompt(family, snap) {
   ].join('\n');
 }
 
-function personaPrompt(family, snap, results, { homework = null, notes = [] } = {}) {
+function personaPrompt(family, snap, results, { homework = null, notes = [], document = null } = {}) {
   const { kidName: kid, girlInfo: g, petInfo: p, pet } = snap.profile;
   const look = STAGE_LOOKS[pet]?.[snap.affinity.stage - 1] || '';
   const extra = [];
@@ -462,6 +501,15 @@ function personaPrompt(family, snap, results, { homework = null, notes = [] } = 
       ...homework.problems.map((q) => `${q.n ? `第${q.n}题` : '一题'}：${q.text}${q.done ? `（TA 写的答案：${q.done}）` : ''}`),
       homework.hint ? `思路：${homework.hint}` : '',
       `辅导的规矩：TA 问作业时，一次只讲一小步，先问 TA 是怎么想的；可以换成更小的数或者生活里的例子帮 TA 想；不直接说出答案，TA 坚持要答案就给最关键的一步提示；TA 写的答案对了要具体地夸，错了就引导 TA 自己找出哪一步不对。`,
+    );
+  }
+  if (document) {
+    extra.push(
+      '',
+      `【文件】${kid}刚才发给你看了《${document.title}》：${document.gist}`,
+      '文件里和 TA 刚才说的话最有关的原文：',
+      document.excerpt,
+      `TA 问到文件里的内容时，只依据原文回答，原文里没有的就说不知道；用 TA 听得懂的话讲。如果是题目，一次只讲一小步，不直接说出答案。`,
     );
   }
   if (notes.length) {

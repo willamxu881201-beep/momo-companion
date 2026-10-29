@@ -325,6 +325,10 @@ body.quiet-time .night { opacity: 1; }
   .pick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bubble p { font-size: 1.15rem; } /* fits under her chin on a phone, clear of the pet */
 }
+/* A small phone: a size smaller still, so her words fit beside the pet rather than over it. */
+@media (max-width: 380px) {
+  .bubble p { font-size: 1.05rem; }
+}
 @media (orientation: landscape) and (max-height: 640px) {
   .pick img { aspect-ratio: 1 / 1; object-position: 50% 15%; }
 }

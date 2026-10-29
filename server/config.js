@@ -20,11 +20,16 @@ export const config = {
   ttsAppId: env.DOUBAO_APPID || '',
   ttsToken: env.DOUBAO_TOKEN || '',
 
+  // Pushes to Mom's phone while her page is closed (notify.js); off when empty.
+  notifyUrl: env.NOTIFY_URL || '',
+  notifyKinds: (env.NOTIFY_KINDS || '').split(/[\s,，]+/).filter(Boolean), // message,check,done,photo; empty: all
+
   limits: {
     chatPerDay: num(env.CHAT_PER_DAY, 80),
     asrPerDay: num(env.ASR_PER_DAY, 150),
     ttsCharsPerDay: num(env.TTS_CHARS_PER_DAY, 20000),
     visionPerDay: num(env.VISION_PER_DAY, 60), // photos, files and check-ins together
     momChatPerDay: num(env.MOM_CHAT_PER_DAY, 80),
+    notifyPerDay: num(env.NOTIFY_PER_DAY, 30),
   },
 };

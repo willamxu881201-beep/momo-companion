@@ -377,6 +377,19 @@ export class Store {
       .map((e) => ({ ...e, data: e.data ? JSON.parse(e.data) : null }));
   }
 
+  // How many events of a kind a day has, and when the last one was (ms). withFile:
+  // only those with a picture (a look-in that really took one).
+  eventCount(date, kind, { withFile = false } = {}) {
+    return plain(this.db.prepare(`SELECT COUNT(*) AS n, MAX(at) AS last FROM events WHERE date = ? AND kind = ?${withFile ? ' AND file_id IS NOT NULL' : ''}`).get(date, kind));
+  }
+
+  // Forgets the record and the messages from before `before` (ms).
+  prune(before) {
+    const events = this.db.prepare('DELETE FROM events WHERE at < ?').run(before).changes;
+    const messages = this.db.prepare('DELETE FROM messages WHERE at < ?').run(before).changes;
+    return { events: Number(events), messages: Number(messages) };
+  }
+
   // ---- messages between Mom and MoMo ------------------------------------------
 
   addMessage(from, to, text) {

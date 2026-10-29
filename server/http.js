@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { pipeline } from 'node:stream';
-import { addDays, dateZh, isDate, timeToMinutes } from './dates.js';
+import { addDays, dateZh, isDate, nowIn, timeToMinutes } from './dates.js';
 import { KID_COOKIE, KID_TTL_S, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
 import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
 import { inQuiet } from './events.js';
@@ -41,7 +41,7 @@ class HttpError extends Error {
 const UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
 export function createHandler({
-  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, webDir,
+  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, webDir,
   tts = synthesizeStream, flashAsr = transcribeFlash, arkAsr = transcribe,
 }) {
   // Speech is made once per (voice, line): the chat route starts it as soon as the
@@ -403,6 +403,9 @@ export function createHandler({
     return { ok: true, tablets: hub.size };
   });
 
+  // Sends a test push to Mom's phone, so she knows it reaches her.
+  on('POST', '/api/parent/test-push', 'parent', () => need(notify, '手机推送').test());
+
   // ---- state builders --------------------------------------------------------
 
   function kidState() {
@@ -425,7 +428,13 @@ export function createHandler({
       pets: Object.fromEntries(Object.entries(PETS).filter(([k]) => !hidden.pets.includes(k)).map(([k, p]) => [k, { name: p.name, kind: p.kind, sound: p.sound, moves: p.moves }])),
       tts: Boolean(config.ttsAppId),
       quiet: inQuiet(s.now.minutes, store.getSetting('quiet')),
+      looked: lookedToday(s.now.date), // MoMo sees how often Mom looked in through the camera
     };
+  }
+
+  function lookedToday(date) {
+    const { n, last } = store.eventCount(date, 'check', { withFile: true });
+    return n ? { n, last: nowIn(family.timeZone, new Date(last)).time } : null;
   }
 
   function parentState() {
@@ -456,8 +465,9 @@ export function createHandler({
       pets: Object.fromEntries(Object.entries(PETS).map(([k, p]) => [k, { name: p.name, kind: p.kind }])),
       kidKey: auth.kidKey(),
       tablets: hub.size,
-      usage: { chat: store.usage(now.date, 'chat'), asr: store.usage(now.date, 'asr'), tts: store.usage(now.date, 'tts'), vision: store.usage(now.date, 'vision'), momchat: store.usage(now.date, 'momchat'), limits: config.limits },
+      usage: { chat: store.usage(now.date, 'chat'), asr: store.usage(now.date, 'asr'), tts: store.usage(now.date, 'tts'), vision: store.usage(now.date, 'vision'), momchat: store.usage(now.date, 'momchat'), notify: store.usage(now.date, 'notify'), limits: config.limits },
       tts: Boolean(config.ttsAppId),
+      push: notify && notify.on ? notify.target.name : null, // the service Mom's phone hears from
     };
   }
 

@@ -64,6 +64,8 @@ ARK_API_KEY=
 # 豆包语音 2.0 的 APP ID 和 Access Token（不填就用平板自带的声音）
 DOUBAO_APPID=
 DOUBAO_TOKEN=
+# 手机推送（可选）：妈妈的页面没打开时，把沫沫的留言等推送到手机，填法见 README「手机推送」
+NOTIFY_URL=
 EOF
   echo "   已创建。请填写密码和 Key：nano $ENV_FILE"
 else

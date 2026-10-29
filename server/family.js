@@ -161,8 +161,8 @@ export class Family {
   // A timetable read off a photo replaces the courses for the days it shows (and the
   // number of days in the rotation). The old ones are returned, for undo.
   applyTimetable(tt) {
-    const before = { courses: this.store.getCourses(), cycleLength: this.store.getSetting('cycle').cycleLength };
     const cycle = this.store.getSetting('cycle');
+    const before = { courses: this.store.getCourses(), cycleLength: cycle.cycleLength, anchorDay: cycle.anchorDay };
     if (tt.cycle && tt.cycle !== cycle.cycleLength) {
       this.store.setSetting('cycle', { ...cycle, cycleLength: tt.cycle, anchorDay: cycle.anchorDay && cycle.anchorDay <= tt.cycle ? cycle.anchorDay : null });
     }
@@ -176,7 +176,7 @@ export class Family {
     if (data.courses) {
       for (const day of Object.keys({ ...this.store.getCourses(), ...data.courses })) this.store.setCourses(Number(day), data.courses[day] || []);
       const cycle = this.store.getSetting('cycle');
-      this.store.setSetting('cycle', { ...cycle, cycleLength: data.cycleLength || cycle.cycleLength });
+      this.store.setSetting('cycle', { ...cycle, cycleLength: data.cycleLength || cycle.cycleLength, anchorDay: data.anchorDay === undefined ? cycle.anchorDay : data.anchorDay });
     }
     for (const id of data.added || []) {
       const t = this.store.getInstance(id);

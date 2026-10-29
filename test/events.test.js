@@ -66,3 +66,17 @@ test('alarms fire once; stale ones are dropped silently', () => {
   assert.deepEqual(sent.map((e) => e.alarm.label), ['起床']);
   assert.equal(store.pendingAlarms().length, 0);
 });
+
+test('the record and the messages are kept 90 days', (t) => {
+  const { scheduler, family, store } = setup('2026-10-28T08:30:00Z');
+  const real = Date.now();
+  t.mock.method(Date, 'now', () => real - 91 * 86400000);
+  family.log('kid', 'done', '很久以前的事');
+  store.addMessage('kid', 'mom', '很久以前的话');
+  t.mock.restoreAll();
+  family.log('kid', 'done', '今天的事');
+  store.addMessage('kid', 'mom', '今天的话');
+  scheduler.tick();
+  assert.deepEqual(store.listEvents('2026-10-28').map((e) => e.text), ['今天的事']);
+  assert.deepEqual(store.recentMessages('mom', 0).map((m) => m.text), ['今天的话']);
+});

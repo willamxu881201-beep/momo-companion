@@ -386,6 +386,7 @@ export class Pet {
     this.face = -1; // 1 looks right, -1 left
     this.hop = 0;
     this.trip = null;
+    this.target = null; // [a, r] it is headed for to listen to her, while it is
     this.seq = 0; // bumped whenever something new takes over
     this.mode = 'off'; // off | life | busy | asleep
     this.mood = null; // its own picture: null, 'happy' or 'sleepy'
@@ -567,6 +568,7 @@ export class Pet {
   takeOver(mode) {
     this.seq += 1;
     this.mode = mode;
+    this.target = null;
     this.stop();
     this.act('listen', false);
     this.act('tilt', false);
@@ -735,16 +737,39 @@ export class Pet {
     if (seq === this.seq) this.setMood(null);
   }
 
-  // ---- with her ----
-  // She has started a line: come close on the side away from her words, look up at
-  // her and listen.
-  async attend() {
-    if (!this.G || this.mode === 'asleep') return;
-    const seq = this.takeOver('busy');
-    const b = $('bubble').getBoundingClientRect();
+  // Its head on the page: where it stands, or where it is headed to listen (so her
+  // words can keep clear of it before it gets there).
+  headBox() {
+    if (!this.G || !this.target) return pictureBox(this.sprite, PET_HEAD);
     const st = $('stage').getBoundingClientRect();
-    const wordsLeft = !$('bubble').hidden && (b.left + b.right) / 2 - st.left < this.G.cx;
-    await this.go(wordsLeft ? Math.PI * 0.28 : Math.PI * 0.72, 0.85, { speed: 2.2 });
+    const [a, r] = this.target;
+    const [x, y] = this.where(a, r);
+    const s = 1 + 0.1 * Math.sin(a) * Math.min(1, r); // as place() scales it, from its feet
+    const { petW: w, petH: h } = this.G;
+    return {
+      l: st.left + x + (PET_HEAD[0] - 0.5) * w * s,
+      r: st.left + x + (PET_HEAD[2] - 0.5) * w * s,
+      t: st.top + y - (1 - PET_HEAD[1]) * h * s,
+      b: st.top + y - (1 - PET_HEAD[3]) * h * s,
+    };
+  }
+
+  // ---- with her ----
+  // She is about to start a line: it will listen from close by, on the side it is on.
+  // Called before her words are placed, which then keep clear of that spot.
+  aim() {
+    if (!this.G || this.mode === 'asleep') return null;
+    const [x] = this.where();
+    this.target = x < this.G.cx ? [Math.PI * 0.72, 0.85] : [Math.PI * 0.28, 0.85];
+    return this.target;
+  }
+
+  // Her line has started: come over to that spot, look up at her and listen.
+  async attend(spot = this.aim()) {
+    if (!this.G || this.mode === 'asleep' || !spot) return;
+    const seq = this.takeOver('busy');
+    this.target = spot;
+    await this.go(...spot, { speed: 2.2 });
     if (seq !== this.seq) return;
     this.faceHer();
     this.act('listen');
@@ -871,7 +896,8 @@ addEventListener('resize', () =>
 // by her mouth. The moment it starts, the words appear there, she talks, the line's
 // mood moves her and the pet reacts, all for exactly as long as the voice lasts;
 // then the mood stays on her face for a moment.
-export async function say(text, { pet: petAction = null, mood: feel = null } = {}) {
+// aside: a passing word ("我看看～") that the page doesn't keep (app.onSay isn't told).
+export async function say(text, { pet: petAction = null, mood: feel = null, aside = false } = {}) {
   let evolving = false;
   if (app.evolved) {
     text = `${text}哇！${app.evolved}`;
@@ -881,10 +907,11 @@ export async function say(text, { pet: petAction = null, mood: feel = null } = {
     evolving = true;
   }
   const finished = await speak(text, () => {
+    const spot = petLife.aim(); // first, so her words go where the pet won't be
     showWords(text);
-    app.onSay(text);
+    if (!aside) app.onSay(text);
     look.feel = feel;
-    petLife.attend(); // it comes over to listen
+    petLife.attend(spot); // it comes over to listen
     if (petAction) {
       petCaption(petAction);
       petMood('happy', 20000); // ends with the line, see below
@@ -1063,7 +1090,7 @@ export function placeBubble() {
   };
   const [mx, my] = picturePoint(girlFig, ...m.mouth);
   const face = pictureBox(girlFig, m.face);
-  const petHead = pictureBox($('petFig').querySelector('.sprite'), PET_HEAD);
+  const petHead = petLife.headBox();
   const body = pictureBox(girlFig, m.bbox);
   const gap = rem * 0.9;
 
@@ -1098,8 +1125,9 @@ export function placeBubble() {
   const chin = Math.max(face.b, my + rem) + gap * 0.6;
   const below = (sz) => [mx - sz.w / 2, region.l, region.r - sz.w].map((l) => ({ l, t: chin, r: l + sz.w, b: chin + sz.h }));
   add('below', region.r - region.l, below);
-  // Under her chin but narrower, so it stops short of the pet's head.
+  // Under her chin but narrower, so it stops short of the pet's head on either side.
   if (petHead.l > region.l) add('below', petHead.l - gap - region.l, (sz) => [{ l: region.l, t: chin, r: region.l + sz.w, b: chin + sz.h }]);
+  if (petHead.r < region.r) add('below', region.r - petHead.r - gap, (sz) => [{ l: region.r - sz.w, t: chin, r: region.r, b: chin + sz.h }]);
 
   let best = null;
   for (const c of tries) {

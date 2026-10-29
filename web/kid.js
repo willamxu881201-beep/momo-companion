@@ -49,6 +49,9 @@ function render(s) {
   const a = s.alarms[0];
   $('alarm').hidden = !a;
   if (a) $('alarm').textContent = `⏰ ${a.date === s.now.date ? '' : '明天 '}${a.time} ${a.label}`;
+  // Mom's looks through the camera are never secret: MoMo sees how many there were today.
+  $('looked').hidden = !s.looked;
+  if (s.looked) $('looked').textContent = `📷 妈妈今天看过 ${s.looked.n} 次 · ${s.looked.last}`;
 
   const list = $('tasks');
   list.textContent = '';

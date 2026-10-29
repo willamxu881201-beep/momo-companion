@@ -106,6 +106,19 @@ test("Mom's photo of a timetable replaces the courses; undo puts the old ones ba
   assert.ok(hub.got.some((e) => e.type === 'refresh'), 'the tablet reloads');
   await mom.post(`/api/parent/undo/${r.undo}`, {});
   assert.deepEqual(store.getCourses(), { 1: [{ name: '数学' }] });
+
+  // A timetable with a different cycle: every day's D number moves, so Mom is asked to
+  // check which day today is; undo puts the old cycle back as it was.
+  store.setSetting('cycle', { anchorDate: '2026-10-26', anchorDay: 6 });
+  picture = { ...picture, timetable: { cycle: 5, days: [{ day: 1, courses: [{ name: '华文', note: '' }] }] } };
+  const five = await (await kid.post('/api/upload', jpeg(), 'image/jpeg')).json();
+  assert.match(five.line, /轮换的天数变了，我请妈妈核对/);
+  assert.deepEqual([store.getSetting('cycle').cycleLength, store.getSetting('cycle').anchorDay], [5, null]);
+  const logged = store.getEvent(five.undo);
+  assert.match(logged.text, /一轮从 6 天变成 5 天，请到「管理 → 课表」核对今天是 D 几/);
+  await mom.post(`/api/parent/undo/${five.undo}`, {});
+  assert.deepEqual([store.getSetting('cycle').cycleLength, store.getSetting('cycle').anchorDay], [6, 6]);
+  store.setSetting('cycle', { anchorDate: '2026-10-26', anchorDay: 1 });
 });
 
 test('a page of homework is kept in mind for helping, and only images and PDFs are read', async () => {
@@ -137,6 +150,10 @@ test('Mom looks in: the tablet is asked, takes a picture, and Mom hears what it 
   assert.equal(result.text, 'MoMo趴在桌上写作业');
   assert.ok(result.fileId);
   assert.deepEqual(hub.got.find((e) => e.type === 'say'), { type: 'say', line: '抬起头，坐直一点哦', mood: 'happy' }, 'a gentle word to MoMo');
+  assert.ok(hub.got.some((e) => e.type === 'refresh'), "MoMo's page refreshes...");
+  const looked = (await (await kid.get('/api/state')).json()).looked;
+  assert.equal(looked.n, 1, '...and shows that Mom looked once today');
+  assert.match(looked.last, /^\d\d:\d\d$/);
 
   // Only Mom sees the picture.
   const pic = await mom.get(`/api/parent/files/${result.fileId}`);
@@ -154,6 +171,8 @@ test("a check-in with the camera refused tells Mom so; with no tablet on, Mom he
   assert.equal(asked.listen, true, 'the piano check listens too');
   await kid.post(`/api/checks/${ask.id}`, { error: 'camera' });
   assert.match(momHub.got.find((e) => e.type === 'check').text, /摄像头没打开/);
+  const logged = store.listEvents(family.now().date).find((e) => e.kind === 'check');
+  assert.match(logged.text, /^看看在不在练琴：平板的摄像头没打开/, 'the record shows it too, for when Mom comes back');
 
   hub.size = 0;
   const none = await (await mom.post('/api/parent/check', { what: 'look' })).json();

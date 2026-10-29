@@ -1,6 +1,6 @@
 // Live pushes (Server-Sent Events) to the tablet and to Mom's page, and the
 // minute-by-minute scheduler that fires task reminders and alarms, passes on Mom's
-// messages once the tablet is on, and clears out old photos.
+// messages once the tablet is on, and clears out old photos and old records.
 
 import { timeToMinutes } from './dates.js';
 
@@ -47,6 +47,8 @@ const REMIND = {
 const NUDGE = (kid, t) => `${kid}，${t}开始了吗？先做五分钟也很棒哦。`;
 const ALARM = (kid, label) => `${kid}，${label}时间到啦！`;
 
+const KEEP_DAYS = 90; // the day's record and the messages; photos go after a week (files.js)
+
 export function inQuiet(minutes, quiet) {
   const s = timeToMinutes(quiet?.start);
   const e = timeToMinutes(quiet?.end);
@@ -74,9 +76,10 @@ export class Scheduler {
       this.checkAlarms();
       this.checkTasks();
       if (this.post) this.post.offer();
-      if (this.files && Date.now() - (this.swept || 0) > 3600000) {
+      if (Date.now() - (this.swept || 0) > 3600000) {
         this.swept = Date.now();
-        this.files.sweep();
+        if (this.files) this.files.sweep();
+        this.family.store.prune(Date.now() - KEEP_DAYS * 86400000);
       }
     } catch (err) {
       console.error('[scheduler]', err);

@@ -78,6 +78,8 @@ export class Eyes {
     if (r.kind === 'timetable' && r.timetable) {
       data = this.family.applyTimetable(r.timetable);
       out.changes = r.timetable.days.map((d) => `D${d.day}：${d.courses.map((c) => c.name).join('、')}`);
+      // A new cycle length moves every day's D number: Mom has to say which day is which.
+      if (r.timetable.cycle && r.timetable.cycle !== data.cycleLength) out.cycle = { from: data.cycleLength, to: r.timetable.cycle };
     } else if (r.kind === 'homework_list' && r.homework.length) {
       const { date, added } = this.family.addHomework(r.homework, { source: `file:${fileId}` });
       data = { added: added.map((t) => t.id) };
@@ -89,7 +91,7 @@ export class Eyes {
     }
     const by = who === 'kid' ? kid : '妈妈';
     const what = {
-      timetable: `${by}发来课程表，已更新 ${out.changes.length} 天的课`,
+      timetable: `${by}发来课程表，已更新 ${out.changes.length} 天的课${out.cycle ? `；一轮从 ${out.cycle.from} 天变成 ${out.cycle.to} 天，请到「管理 → 课表」核对今天是 D 几` : ''}`,
       homework_list: out.changes.length ? `${by}发来作业清单，加了 ${out.changes.length} 件作业：${out.changes.join('、')}` : `${by}发来作业清单，里面的作业都已经在任务里了`,
       homework_page: `${by}拍了作业：${r.summary}`,
       other: `${by}发来照片：${r.summary}`,
@@ -111,7 +113,8 @@ export class Eyes {
     const toKid = who === 'kid';
     switch (r.kind) {
       case 'timetable':
-        return toKid ? `我看到课程表啦，已经记下 ${out.changes.length} 天的课，以后问我上什么课就行！` : `课程表已经更新好了，一共 ${out.changes.length} 天。${r.unsure ? `有些地方没看清：${r.unsure}，您再核对一下。` : ''}`;
+        if (toKid) return `我看到课程表啦，已经记下 ${out.changes.length} 天的课，以后问我上什么课就行！${out.cycle ? '轮换的天数变了，我请妈妈核对一下今天是第几天。' : ''}`;
+        return `课程表已经更新好了，一共 ${out.changes.length} 天。${out.cycle ? `一轮从 ${out.cycle.from} 天变成了 ${out.cycle.to} 天，请到「管理 → 课表」核对一下今天是 D 几。` : ''}${r.unsure ? `有些地方没看清：${r.unsure}，您再核对一下。` : ''}`;
       case 'homework_list':
         if (!out.changes.length) return toKid ? '这些作业我都已经记下啦。' : '这些作业之前都已经加过了。';
         return toKid
@@ -148,12 +151,16 @@ export class Eyes {
     return { ok: true, id, pending: true, text: `我去${CHECK_WHAT[what]}，马上告诉你。` };
   }
 
-  finish(id, result) {
+  // The look is over: what it saw, or why it saw nothing, goes into the day's record
+  // (so Mom finds it even if her page was closed) and to Mom's page.
+  finish(id, result, data = null) {
     const c = this.checks.get(id);
     if (!c) return;
     this.checks.delete(id);
     clearTimeout(c.timer);
+    this.family.log('tablet', 'check', `${CHECK_WHAT[c.what]}：${result.text}`, { fileId: result.fileId || null, data });
     this.momHub.send({ type: 'check', id, what: c.what, ...result });
+    if (result.fileId) this.hub.send({ type: 'refresh' }); // MoMo's page counts Mom's looks
   }
 
   // The tablet's answer: a JPEG (base64), maybe a WAV, or the reason it couldn't. The
@@ -186,9 +193,7 @@ export class Eyes {
       return;
     }
     this.store.setFileResult(fileId, r);
-    const text = r.summary || r.doing || '看到了。';
-    this.family.log('tablet', 'check', `${CHECK_WHAT[c.what]}：${text}`, { fileId, data: r });
     if (c.what === 'posture' && r.posture.ok === false && r.posture.tip) this.hub.send({ type: 'say', line: r.posture.tip, mood: 'happy' });
-    this.finish(id, { ok: true, text, fileId, seen: r.seen, piano: r.piano, posture: r.posture });
+    this.finish(id, { ok: true, text: r.summary || r.doing || '看到了。', fileId, seen: r.seen, piano: r.piano, posture: r.posture }, r);
   }
 }

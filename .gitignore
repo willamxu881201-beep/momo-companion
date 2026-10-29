@@ -6,3 +6,4 @@ data/
 *.key
 *.pem
 .DS_Store
+tools/browser/out/

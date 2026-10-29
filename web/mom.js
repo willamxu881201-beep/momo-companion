@@ -5,7 +5,7 @@
 // the day's record with its photos. The old settings live in the 管理 sheet (admin.js).
 
 import {
-  $, api, app, placeBubble, pose, say, sendPicture, setBusy, showCharacters, stopSpeaking, wakeUp,
+  $, api, app, pick, placeBubble, pose, say, sendPicture, setBusy, showCharacters, sleep, stopSpeaking, wakeUp,
 } from './companion.js';
 import { initAdmin, refreshAdmin, renderAdmin } from './admin.js';
 
@@ -172,6 +172,11 @@ function addChat(who, text) {
   $('chat').scrollTop = $('chat').scrollHeight;
 }
 
+// What she says while a slow answer is on its way: for something to do, or to look up.
+const ON_IT = ['好的～', '好，马上办。'];
+const LOOKING = ['好的，我看看～', '嗯，我查一下哦。', '好，我翻翻今天的记录。', '稍等，我看一下。'];
+const asksToDo = (text) => /告诉|转告|跟她说|让她|提醒|加个|加一个|闹钟|定个|设个/.test(text);
+
 async function send(text) {
   if (!text) return;
   addChat('me', text);
@@ -179,8 +184,17 @@ async function send(text) {
   setBusy(true, '想一想…');
   $('heard').hidden = false;
   $('heard').textContent = `你说：${text}`;
+  let answered = false;
+  const asked = api('/api/parent/chat', { text }).finally(() => (answered = true));
+  // Looking through the day can take a few seconds. If it does, she says so first,
+  // then goes back to thinking until the answer is in.
+  await Promise.race([asked.catch(() => {}), sleep(1200)]);
+  if (!answered) {
+    await say(pick(asksToDo(text) ? ON_IT : LOOKING), { aside: true });
+    if (!answered) setBusy(true, '查一查…');
+  }
   try {
-    const r = await api('/api/parent/chat', { text });
+    const r = await asked;
     setBusy(false);
     if (r.actions && r.actions.length) reload();
     await say(r.reply, { mood: 'happy' });
@@ -245,8 +259,12 @@ $('photoInput').addEventListener('change', async () => {
 
 let queue = Promise.resolve();
 let refreshTimer = 0;
+let es = null;
+// Open only while the page is in front. While it isn't, the server knows Mom isn't
+// looking and sends MoMo's news to her phone instead (if a push service is set up).
 function connectEvents() {
-  const es = new EventSource('/api/parent/events');
+  if (es) return;
+  es = new EventSource('/api/parent/events');
   es.onmessage = (e) => {
     let ev;
     try {
@@ -261,6 +279,12 @@ function connectEvents() {
     }
     queue = queue.then(() => handle(ev)).catch((err) => console.warn(err));
   };
+}
+
+function disconnectEvents() {
+  if (!es) return;
+  es.close();
+  es = null;
 }
 
 async function handle(ev) {
@@ -317,7 +341,11 @@ $('logout').addEventListener('click', async () => {
 initAdmin({ saved: (s) => (mom = s) });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && app.started) reload();
+  if (!app.started) return;
+  if (document.visibilityState === 'visible') {
+    connectEvents();
+    reload();
+  } else disconnectEvents();
 });
 setInterval(async () => {
   if (!app.started || document.hidden || !$('admin').hidden) return;

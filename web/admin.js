@@ -70,7 +70,7 @@ function renderToday(s) {
     ...s.ledger.slice(0, 10).map((l) => h('li', {}, h('span', { class: 'grow' }, `${l.date} ${REASON[l.reason] || l.reason}`), `+${l.delta}`)),
   );
   const u = s.usage;
-  $('usage').textContent = `沫沫对话 ${u.chat}/${u.limits.chatPerDay} 次 · 妈妈对话 ${u.momchat || 0}/${u.limits.momChatPerDay || '-'} 次 · 语音识别 ${u.asr}/${u.limits.asrPerDay} 次 · 配音 ${u.tts}/${u.limits.ttsCharsPerDay} 字 · 看照片 ${u.vision || 0}/${u.limits.visionPerDay || '-'} 次`;
+  $('usage').textContent = `沫沫对话 ${u.chat}/${u.limits.chatPerDay} 次 · 妈妈对话 ${u.momchat || 0}/${u.limits.momChatPerDay || '-'} 次 · 语音识别 ${u.asr}/${u.limits.asrPerDay} 次 · 配音 ${u.tts}/${u.limits.ttsCharsPerDay} 字 · 看照片 ${u.vision || 0}/${u.limits.visionPerDay || '-'} 次` + (s.push ? ` · 手机推送 ${u.notify || 0}/${u.limits.notifyPerDay} 条` : '');
 }
 
 function renderTimetable(s) {
@@ -178,6 +178,11 @@ function renderTablets(s) {
   $('online').textContent = s.tablets
     ? `现在有 ${s.tablets} 台设备开着孩子页面`
     : '现在没有设备开着孩子页面（页面开着才能到点提醒）';
+  const kid = s.profile.kidName || '孩子';
+  $('pushNote').textContent = s.push
+    ? `已开（${s.push}）：这个页面没打开时，${kid}的留言、看看${kid}的结果、${kid}做完的任务和发来的照片会推送到手机。`
+    : `还没开。想在这个页面没打开时也收到${kid}的留言，需要在服务器的 /etc/momo/momo.env 里填 NOTIFY_URL，再重启服务（填法见 README「手机推送」）。`;
+  $('testPush').hidden = !s.push;
 }
 
 // ---- events -------------------------------------------------------------------
@@ -283,6 +288,16 @@ $('testReminder').addEventListener('click', async () => {
     $('testMsg').textContent = r.tablets ? '已发送，平板应该在说话了' : '没有平板在线，提醒没有送达';
   } catch (err) {
     $('testMsg').textContent = err.message;
+  }
+});
+
+$('testPush').addEventListener('click', async () => {
+  $('pushMsg').textContent = '发送中…';
+  try {
+    const r = await api('/api/parent/test-push', {});
+    $('pushMsg').textContent = r.ok ? '已发出，看看手机收到没有' : `没发出去：${r.error}`;
+  } catch (err) {
+    $('pushMsg').textContent = err.message;
   }
 });
 

@@ -11,6 +11,7 @@ import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
 import { inQuiet } from './events.js';
 import { MIME_EXT } from './files.js';
 import { PART_ZH, TYPE_ZH } from './extract.js';
+import { FREE_SCENES, SCENES, placeOf, sceneOf } from './activity.js';
 import { ARK_ORIGIN } from './ark.js';
 import { warm } from './client.js';
 import { Clip, PCM_RATE, SPEECH_ORIGIN, synthesizeStream, transcribe, transcribeFlash, wavRms, wavSeconds } from './speech.js';
@@ -42,7 +43,7 @@ class HttpError extends Error {
 
 
 export function createHandler({
-  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, webDir,
+  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, coach = null, webDir,
   tts = synthesizeStream, flashAsr = transcribeFlash, arkAsr = transcribe,
 }) {
   // Speech is made once per (voice, line): the chat route starts it as soon as the
@@ -116,6 +117,7 @@ export function createHandler({
       return { reply: '今天我们聊了好多啦，我的嗓子要休息一下，明天再陪你聊好不好？', petAction: null, actions: [], limited: true };
     }
     store.addUsage(today, 'chat');
+    if (coach && ctx.kid) coach.heard(); // she is talking: the companion won't speak up over her
     // The voice for the character's first answer starts while the router still decides;
     // if a tool changes the answer, that clip just goes unused.
     const r = await brain.reply(ctx.kid ? 'kid' : 'parent', ctx.body.text, { onEarly: speech });
@@ -204,6 +206,16 @@ export function createHandler({
     return { status: 200, type: 'application/octet-stream', headers: { 'X-Audio-Format': `pcm_s16le;rate=${PCM_RATE}` }, stream: clip.read() };
   });
 
+  // MoMo starts a task now: the scene changes to its place, and her line says so.
+  on('POST', '/api/tasks/:id/start', 'kid', (ctx) => {
+    const r = family.startTask(Number(ctx.params.id));
+    if (!r.ok) throw new HttpError(400, r.reason);
+    const place = placeOf(r.task);
+    const line = place ? `好嘞，我们去${SCENES[place].name}！${r.task.title}，开始～` : `好嘞，${r.task.title}，开始～`;
+    speech(line);
+    return { ok: true, line, state: kidState() };
+  });
+
   on('POST', '/api/tasks/:id/done', 'kid', (ctx) => {
     const r = family.markDone(Number(ctx.params.id));
     if (!r.ok) throw new HttpError(400, r.reason);
@@ -213,7 +225,11 @@ export function createHandler({
   on('POST', '/api/profile', 'kid', (ctx) => {
     const hidden = store.getSetting('hidden');
     const p = store.getSetting('profile');
-    const { girl, pet } = ctx.body;
+    const { girl, pet, scene } = ctx.body;
+    if (scene !== undefined) {
+      if (!FREE_SCENES.includes(scene)) throw new HttpError(400, '没有这个地方');
+      p.scene = scene;
+    }
     if (girl !== undefined) {
       if (!GIRLS[girl] || hidden.girls.includes(girl)) throw new HttpError(400, '没有这个伙伴');
       p.girl = girl;
@@ -353,7 +369,8 @@ export function createHandler({
     const title = String(t.title || '').trim().slice(0, 20);
     if (!title) throw new HttpError(400, '任务名不能为空');
     if (t.time && timeToMinutes(t.time) === null) throw new HttpError(400, '时间格式是 HH:MM，比如 16:30');
-    store.saveTemplate({ ...t, title, icon: String(t.icon || '').slice(0, 4), minutes: Math.min(Math.max(Number(t.minutes) || 30, 5), 240) });
+    const scene = t.scene === 'none' || (SCENES[t.scene] && !SCENES[t.scene].free) ? t.scene : null; // null: by its name
+    store.saveTemplate({ ...t, title, icon: String(t.icon || '').slice(0, 4), minutes: Math.min(Math.max(Number(t.minutes) || 30, 5), 240), scene });
     return parentState();
   });
 
@@ -431,14 +448,19 @@ export function createHandler({
       dateZh: dateZh(s.now.date),
       today: s.today,
       tomorrow: { ...s.tomorrow, dateZh: dateZh(s.tomorrow.date) },
-      tasks: s.tasks.map(({ id, title, icon, time, minutes, status }) => ({ id, title, icon, time, minutes, status })),
+      tasks: s.tasks.map(({ id, title, icon, time, minutes, status, started_at: started }) => ({ id, title, icon, time, minutes, status, started })),
       alarms: s.alarms.map(({ id, date, time, label }) => ({ id, date, time, label })),
       affinity: {
         ...s.affinity,
         stageName: STAGE_NAMES[s.profile.pet]?.[s.affinity.stage - 1],
         stageUp: STAGE_UP[s.profile.pet]?.[s.affinity.stage - 2] || null,
       },
-      profile: { kidName: s.profile.kidName, girl: s.profile.girl, pet: s.profile.pet },
+      profile: { kidName: s.profile.kidName, girl: s.profile.girl, pet: s.profile.pet, scene: s.profile.scene },
+      // Where she is now (activity.js): the scene follows what MoMo is doing.
+      activity: s.activity ? { id: s.activity.task.id, title: s.activity.task.title, place: s.activity.scene, started: s.activity.started, from: s.activity.from } : null,
+      scene: sceneOf({ activity: s.activity, quiet: inQuiet(s.now.minutes, store.getSetting('quiet')), free: s.profile.scene, minutes: s.now.minutes }),
+      scenes: Object.fromEntries(Object.entries(SCENES).map(([k, v]) => [k, v.name])),
+      freeScenes: FREE_SCENES,
       girls: Object.fromEntries(Object.entries(GIRLS).filter(([k]) => !hidden.girls.includes(k)).map(([k, g]) => [k, { name: g.name }])),
       pets: Object.fromEntries(Object.entries(PETS).filter(([k]) => !hidden.pets.includes(k)).map(([k, p]) => [k, { name: p.name, kind: p.kind, sound: p.sound, moves: p.moves }])),
       tts: Boolean(config.ttsAppId),
@@ -467,6 +489,7 @@ export function createHandler({
       overrides: store.listOverrides(),
       days,
       templates: store.listTemplates(),
+      places: Object.fromEntries(Object.entries(SCENES).filter(([, v]) => !v.free).map(([k, v]) => [k, v.name])), // where a task can happen
       today: family.tasks(now.date),
       waiting: store.listWaiting(),
       affinity: family.affinity(),

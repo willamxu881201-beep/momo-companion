@@ -17,6 +17,7 @@ import { addDays, dateZh, isDate, nowIn, timeToMinutes, weekdayZh } from './date
 import { inQuiet } from './events.js';
 import { CHECK_WHAT } from './eyes.js';
 import { aboutDoc, excerpts } from './docs.js';
+import { SCENES, placeOf } from './activity.js';
 import { PART_ZH, TYPE_ZH } from './extract.js';
 
 const HISTORY_TURNS = 3;
@@ -69,6 +70,18 @@ const TOOLS = [
       name: 'cancel_alarms',
       description: '小朋友说取消闹钟时调用。',
       parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'start_task',
+      description: '小朋友说现在开始做今天的某件任务时调用（比如"我开始写作业了""我去练琴了"）。',
+      parameters: {
+        type: 'object',
+        properties: { task_id: { type: 'integer', description: '资料里任务前面的 id' } },
+        required: ['task_id'],
+      },
     },
   },
   {
@@ -154,6 +167,41 @@ export class Brain {
 
   forget(key) {
     this.histories.delete(key);
+  }
+
+  // Something she said on her own (coach.js), so MoMo's answer to it makes sense to her.
+  note(key, line) {
+    const msgs = [...this.history(key), { role: 'assistant', content: line }];
+    this.histories.set(key, { at: Date.now(), msgs: msgs.slice(-HISTORY_TURNS * 2) });
+  }
+
+  // A line for her to say on her own to MoMo (coach.js tells what about). null when
+  // there's nothing usable; the coach has set lines for that.
+  async speakUp(what) {
+    const snap = this.family.snapshot();
+    const { kidName: kid, girlInfo: g, petInfo: p } = snap.profile;
+    const r = await arkChat({
+      apiKey: this.apiKey,
+      model: this.personaModel,
+      timeoutMs: 15000,
+      maxTokens: 120,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            `你是「${g.name}」，${g.look}。性格：${g.style}。你住在一块平板里，陪伴 8 岁的${kid}，你的搭档是${p.name}（一只${p.kind}）。`,
+            `现在不是${kid}在跟你说话，是你主动开口：${what}`,
+            `要求：只说一两句话，不超过 45 个字，口语、亲切、具体，不说教、不催促、不威胁。可以叫 TA「${kid}」。不用表情符号，不用【】。只输出你要说的话。`,
+            '',
+            '【资料】',
+            this.family.factsText(snap),
+          ].join('\n'),
+        },
+        { role: 'user', content: '（请你开口）' },
+      ],
+    });
+    const line = splitReply(r.content).reply;
+    return line && line !== '嗯嗯，我在听呢。' ? line : null;
   }
 
   // onEarly(reply) hears the character's answer the moment it exists, before the
@@ -242,6 +290,15 @@ export class Brain {
           text: d.day
             ? `查到 ${dateZh(d.date)}：${d.label}，课程依次是 ${list || '（妈妈还没填这天的课）'}`
             : `查到 ${dateZh(d.date)}：休息，不上学`,
+        };
+      }
+      case 'start_task': {
+        const r = f.startTask(Number(a.task_id));
+        if (!r.ok) return { text: `没开始成：${r.reason}` };
+        const place = placeOf(r.task);
+        return {
+          text: `已记下：${r.task.title}现在开始，计划 ${r.task.minutes} 分钟${place ? `；你们一起到了${SCENES[place].name}` : ''}`,
+          action: { type: 'task-started', id: r.task.id },
         };
       }
       case 'mark_task_done': {
@@ -483,6 +540,7 @@ function routerPrompt(family, snap) {
     '规则：',
     '- 问今天或明天的课，不调用工具，资料里已经有了。问其他日子（后天、下周一、11月3日等）的课，调用 get_day，把日期换算成 YYYY-MM-DD。',
     '- 说今天某件任务做完了，调用 mark_task_done，task_id 用资料里的 id。说全都做完了，就对每件还没做的任务各调用一次。',
+    '- 说现在开始做某件任务（“我开始写作业了”“我去练琴啦”），调用 start_task。',
     '- 让你在某个时间叫 TA、提醒 TA，调用 set_alarm。',
     '- 说取消闹钟，调用 cancel_alarms。',
     '- 小朋友明确说“告诉妈妈”“跟妈妈说”“转告妈妈”时，调用 tell_mom，text 照抄 TA 要说的话（“我”就是小朋友自己）。问作业、问问题都不是转告。',

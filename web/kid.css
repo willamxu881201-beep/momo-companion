@@ -141,6 +141,21 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @keyframes feel-worried { 0%, 100% { rotate: 0deg; translate: 0 0; } 50% { rotate: -1.6deg; translate: 0 0.8%; } }
 @keyframes poke { 0% { scale: 1; } 25% { scale: 1.04 0.96; } 55% { scale: 0.985 1.03; } 100% { scale: 1; } }
 
+/* The place she is in (activity.js): a picture behind it all, in two layers that
+   cross-fade when she moves. Held sideways, a tablet shows it whole behind the page;
+   held upright, and on a phone, it fills the top of the page behind the characters and
+   fades into the page colour below them. --focus: what to keep when only a slice fits. */
+.scene { position: relative; grid-row: 1 / 3; grid-column: 1 / -1; pointer-events: none;
+  margin: calc(-1 * var(--pad-t)) calc(-1 * var(--pad-r)) 0 calc(-1 * var(--pad-l));
+  -webkit-mask-image: linear-gradient(180deg, #000 82%, transparent); mask-image: linear-gradient(180deg, #000 82%, transparent); }
+.scene img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: var(--focus, 50%) 70%;
+  opacity: 0; transition: opacity 1.2s ease; }
+.scene img.on { opacity: 1; }
+@media (orientation: landscape) and (min-width: 600px) {
+  .scene { position: fixed; inset: 0; margin: 0; -webkit-mask-image: none; mask-image: none; }
+  .scene img { object-position: 50% 100%; }
+}
+
 /* Quiet hours: the whole picture dims and stars come out above the characters. */
 .night { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.8s ease;
   background: linear-gradient(180deg, rgba(20, 26, 62, 0.52), rgba(12, 16, 42, 0.62)); }
@@ -320,6 +335,8 @@ body.quiet-time .night { opacity: 1; }
 .pick button[aria-pressed="true"] { border-color: var(--accent); }
 .pick img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; }
 .pick span { padding: 0.35rem 0.25rem 0.5rem; font-size: 1rem; font-weight: 600; }
+.pick.places img { aspect-ratio: 16 / 10; }
+.pick.places .plain { width: 100%; aspect-ratio: 16 / 10; background: linear-gradient(135deg, var(--gc), var(--pc)); }
 #pickClose { display: block; margin: 0.5rem auto 0; }
 @media (max-width: 599px) {
   .pick { grid-template-columns: repeat(2, minmax(0, 1fr)); }

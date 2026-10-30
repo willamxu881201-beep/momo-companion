@@ -12,6 +12,7 @@ import { Files } from './files.js';
 import { Eyes } from './eyes.js';
 import { Post } from './post.js';
 import { Notify } from './notify.js';
+import { Coach } from './coach.js';
 import { createHandler } from './http.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,9 +43,11 @@ family.onEvent = (id) => {
   momHub.send({ type: 'event' }); // Mom's page refreshes its record...
   notify.event(store.getEvent(id)); // ...or, while it is closed, her phone hears about it
 };
-new Scheduler(family, hub, { post, files }).start();
+// The companion speaks up about the day's tasks on her own, in her own words.
+const coach = new Coach({ family, hub, momHub, say: (what) => brain.speakUp(what), note: (line) => brain.note('kid', line) });
+new Scheduler(family, hub, { coach, post, files }).start();
 
-const handler = createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, notify, webDir: join(root, 'web') });
+const handler = createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, notify, coach, webDir: join(root, 'web') });
 const server = createServer(handler);
 server.requestTimeout = 180000; // a big document over a slow phone line
 server.listen(config.port, config.host, () => {

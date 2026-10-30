@@ -76,7 +76,14 @@ CREATE TABLE IF NOT EXISTS messages (
 
 // Columns added after the first release, for databases made before them.
 const COLUMNS = {
-  task_instances: { note: "TEXT NOT NULL DEFAULT ''", source: 'TEXT' },
+  task_templates: { scene: 'TEXT' }, // where the task happens (activity.js); null: by its name
+  task_instances: {
+    note: "TEXT NOT NULL DEFAULT ''",
+    source: 'TEXT',
+    scene: 'TEXT',
+    started_at: 'INTEGER', // MoMo said she started it
+    coached: "TEXT NOT NULL DEFAULT ''", // what the companion has already said about it (coach.js)
+  },
   files: { text: 'TEXT' },
 };
 
@@ -181,18 +188,21 @@ export class Store {
       days: t.days || 'school',
       active: t.active === false || t.active === 0 ? 0 : 1,
       sort: Number(t.sort) || 0,
+      scene: t.scene || null,
     };
     if (t.id) {
       this.db
         .prepare(
-          'UPDATE task_templates SET title = ?, icon = ?, time = ?, minutes = ?, days = ?, active = ?, sort = ? WHERE id = ?',
+          'UPDATE task_templates SET title = ?, icon = ?, time = ?, minutes = ?, days = ?, active = ?, sort = ?, scene = ? WHERE id = ?',
         )
-        .run(row.title, row.icon, row.time, row.minutes, row.days, row.active, row.sort, t.id);
+        .run(row.title, row.icon, row.time, row.minutes, row.days, row.active, row.sort, row.scene, t.id);
+      // Today's and later copies follow where it happens.
+      this.db.prepare("UPDATE task_instances SET scene = ? WHERE template_id = ? AND status = 'todo'").run(row.scene, t.id);
       return Number(t.id);
     }
     const r = this.db
-      .prepare('INSERT INTO task_templates (title, icon, time, minutes, days, active, sort) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(row.title, row.icon, row.time, row.minutes, row.days, row.active, row.sort);
+      .prepare('INSERT INTO task_templates (title, icon, time, minutes, days, active, sort, scene) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(row.title, row.icon, row.time, row.minutes, row.days, row.active, row.sort, row.scene);
     return Number(r.lastInsertRowid);
   }
 
@@ -208,11 +218,11 @@ export class Store {
   ensureInstances(date, isSchoolDay) {
     const wd = weekday(date);
     const ins = this.db.prepare(
-      'INSERT OR IGNORE INTO task_instances (date, template_id, title, icon, time, minutes) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO task_instances (date, template_id, title, icon, time, minutes, scene) VALUES (?, ?, ?, ?, ?, ?, ?)',
     );
     for (const t of this.listTemplates()) {
       if (!t.active || !templateApplies(t.days, wd, isSchoolDay)) continue;
-      ins.run(date, t.id, t.title, t.icon, t.time, t.minutes);
+      ins.run(date, t.id, t.title, t.icon, t.time, t.minutes, t.scene ?? null);
     }
   }
 
@@ -243,6 +253,15 @@ export class Store {
 
   markReminded(id, n) {
     this.db.prepare('UPDATE task_instances SET reminded = ? WHERE id = ?').run(n, id);
+  }
+
+  setStarted(id, at = Date.now()) {
+    this.db.prepare('UPDATE task_instances SET started_at = ? WHERE id = ?').run(at, id);
+  }
+
+  // The companion has said `key` about this task (coach.js); each is said once.
+  markCoached(id, key) {
+    this.db.prepare("UPDATE task_instances SET coached = coached || ? || ',' WHERE id = ?").run(key, id);
   }
 
   listWaiting() {

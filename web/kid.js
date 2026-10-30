@@ -2,7 +2,7 @@
 // companion herself (stage, voice, listening) lives in companion.js, shared with Mom's page.
 
 import {
-  $, api, app, chime, look, placeBubble, pose, say, sendFile, setBusy, showCharacters, snapshot, stopSpeaking, wakeUp,
+  $, api, app, chime, look, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, snapshot, stopSpeaking, wakeUp,
 } from './companion.js';
 
 app.send = send;
@@ -42,9 +42,12 @@ function render(s) {
   const nowMin = s.now.minutes;
   const open = s.tasks.filter((t) => t.status === 'todo' || t.status === 'redo');
   const upcoming = open.find((t) => t.time && toMin(t.time) >= nowMin - 30) || open[0];
-  $('next').textContent = upcoming
-    ? `下一件：${upcoming.icon || ''}${upcoming.title}${upcoming.time ? ' ' + upcoming.time : ''}`
-    : s.tasks.length ? '今天的事都交给妈妈看啦' : '';
+  const now = s.activity && s.tasks.find((t) => t.id === s.activity.id);
+  $('next').textContent = now
+    ? `现在：${now.icon || ''}${now.title}${s.activity.place ? ` · ${s.scenes[s.activity.place]}` : ''}`
+    : upcoming
+      ? `下一件：${upcoming.icon || ''}${upcoming.title}${upcoming.time ? ' ' + upcoming.time : ''}`
+      : s.tasks.length ? '今天的事都交给妈妈看啦' : '';
 
   const a = s.alarms[0];
   $('alarm').hidden = !a;
@@ -144,6 +147,7 @@ async function send(text) {
 
 // ---- tasks, picker -----------------------------------------------------------
 
+// A task tapped: start it now (the scene goes to its place), or say it's done.
 let pending = null;
 function askDone(t) {
   if (t.status === 'waiting' || t.status === 'confirmed') {
@@ -151,9 +155,25 @@ function askDone(t) {
     return;
   }
   pending = t;
-  $('confirmText').textContent = `「${t.title}」做完了吗？`;
+  const going = t.started || (app.state.activity && app.state.activity.id === t.id);
+  $('confirmText').textContent = going ? `「${t.title}」做完了吗？` : `「${t.title}」：现在开始，还是已经做完了？`;
+  $('confirmStart').hidden = Boolean(going);
   $('confirm').hidden = false;
 }
+
+$('confirmStart').addEventListener('click', async () => {
+  $('confirm').hidden = true;
+  if (!pending) return;
+  const t = pending;
+  pending = null;
+  try {
+    const r = await api(`/api/tasks/${t.id}/start`, {});
+    render(r.state);
+    await say(r.line, { mood: 'cheer' });
+  } catch (err) {
+    if (err.message !== 'locked') await say(`哎呀，${err.message}。`, { mood: 'worried' });
+  }
+});
 
 $('confirmYes').addEventListener('click', async () => {
   $('confirm').hidden = true;
@@ -191,15 +211,29 @@ function openPicker() {
   };
   fill($('pickGirls'), app.state.girls, 'girl', app.state.profile.girl);
   fill($('pickPets'), app.state.pets, 'pet', app.state.profile.pet);
+  // Where free time is spent: a picture of each place ('plain' is the page's own colours).
+  $('pickScenes').replaceChildren(
+    ...app.state.freeScenes.map((k) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(k === app.state.profile.scene));
+      b.innerHTML = k === 'plain' ? '<i class="plain"></i><span></span>' : '<img alt=""><span></span>';
+      if (k !== 'plain') b.querySelector('img').src = `/img/scene/${k}_day.webp`;
+      b.querySelector('span').textContent = app.state.scenes[k];
+      b.addEventListener('click', () => choose('scene', k));
+      return b;
+    }),
+  );
   $('picker').hidden = false;
 }
 
 async function choose(kind, key) {
   try {
-    const r = await api('/api/profile', kind === 'girl' ? { girl: key } : { pet: key });
+    const r = await api('/api/profile', { [kind]: key });
     render(r.state);
     openPicker();
     if (kind === 'girl') say(`我是${app.state.girls[key].name}，以后我陪着你！`, { mood: 'happy' });
+    else if (kind === 'scene') say(r.state.activity ? `好呀，做完这件事，我们就去${app.state.scenes[key]}玩。` : `好呀，我们去${app.state.scenes[key]}！`, { mood: 'happy' });
     else {
       const p = app.state.pets[key];
       say(`${p.name}来啦！`, { pet: `${p.name}${p.moves[0]}` });
@@ -251,8 +285,20 @@ function connectEvents() {
   };
 }
 
+// When the companion speaks up on her own (coach.js), she waits until MoMo isn't
+// talking with her; a line that has waited two minutes is let go.
+async function free() {
+  const until = Date.now() + 120000;
+  while (app.busy || app.rec || look.speaking || !$('confirm').hidden) {
+    if (Date.now() > until) return false;
+    await sleep(500);
+  }
+  return true;
+}
+
 async function handle(ev) {
   if (ev.type === 'refresh') return load();
+  if (ev.proactive && !(await free())) return load();
   if (ev.type === 'reviewed') return reviewed(ev);
   if (ev.type === 'check') return lookIn(ev);
   if (ev.type === 'message') {

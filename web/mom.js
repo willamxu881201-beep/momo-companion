@@ -43,6 +43,14 @@ function showLogin() {
 }
 
 const STATUS = { todo: '还没做', redo: '要重做', waiting: '等你确认', confirmed: '✓ 已确认' };
+
+// What the bar says: whether the tablet is on, and what MoMo is up to.
+function tabletLine(kid, parent) {
+  if (!parent.tablets) return '平板现在没打开';
+  const a = kid.activity;
+  if (!a) return `平板开着 · ${kid.profile.kidName}的伙伴在线`;
+  return `平板开着 · ${kid.profile.kidName}${a.place ? `在${kid.scenes[a.place]}` : ''}：${a.title}${a.started ? `（${hhmm(a.from)} 开始）` : ''}`;
+}
 const KIND_ICON = {
   done: '✅', review: '👍', reminder: '⏰', alarm: '⏰', photo: '🖼️', timetable: '🗓️', homework_list: '📝',
   homework_page: '📖', check: '📷', message: '💬', task: '➕', undo: '↩️', document: '📄',
@@ -67,7 +75,7 @@ function render(kid, parent) {
   $('startImg').src = `/img/girl_${kid.profile.girl}.jpg`;
   $('date').textContent = kid.dateZh;
   $('dlabel').textContent = kid.today.label;
-  $('next').textContent = parent.tablets ? `平板开着 · ${kid.profile.kidName}的伙伴在线` : '平板现在没打开';
+  $('next').textContent = tabletLine(kid, parent);
   $('lookTitle').textContent = `看看${kid.profile.kidName}`;
   $('tellTitle').textContent = `想让伙伴告诉${kid.profile.kidName}什么？`;
 
@@ -395,7 +403,7 @@ setInterval(async () => {
     const s = await api('/api/parent/state');
     mom = s;
     refreshAdmin(s);
-    $('next').textContent = s.tablets ? `平板开着 · ${app.state.profile.kidName}的伙伴在线` : '平板现在没打开';
+    $('next').textContent = tabletLine(app.state, s);
   } catch {
     /* next time */
   }

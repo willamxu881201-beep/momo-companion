@@ -30,6 +30,7 @@
 </div>
 
 <main id="app" hidden>
+  <div id="scene" class="scene" aria-hidden="true"><img alt=""><img alt=""></div>
   <div class="stage" id="stage">
     <div class="ground" aria-hidden="true"></div>
     <figure class="girl" id="girlFig">
@@ -198,6 +199,7 @@
           <label class="grow">名称 <input id="tplName" maxlength="20" required placeholder="写作业"></label>
           <label>时间 <input id="tplTime" type="time"></label>
           <label>大约几分钟 <input id="tplMinutes" type="number" min="5" max="240" value="30"></label>
+          <label>在哪儿做 <select id="tplScene"></select></label>
         </div>
         <div class="row">
           <label>哪些天
@@ -218,7 +220,7 @@
       </form>
       <div class="card">
         <h2>所有每天的任务</h2>
-        <p class="hint">只做一次的任务和作业，直接跟伙伴说，或者把作业清单拍照发给她。</p>
+        <p class="hint">只做一次的任务和作业，直接跟伙伴说，或者把作业清单拍照发给她。到了任务的时间（或者沫沫说开始了），画面会换到它的地方：写作业、阅读去书房，练琴去琴房，运动去运动馆或公园，洗漱睡觉回卧室；按任务名自动判断，也可以在「在哪儿做」里指定。</p>
         <ul id="templates" class="list"></ul>
       </div>
     </section>

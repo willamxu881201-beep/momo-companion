@@ -1747,6 +1747,7 @@ export function showCharacters(s) {
   document.body.style.setProperty('--gc', GIRL_BG[g] || GIRL_BG.b);
   document.body.style.setProperty('--pc', PET_BG[`${p}_${stage}`] || GIRL_BG[g] || GIRL_BG.b);
   document.body.classList.toggle('quiet-time', Boolean(s.quiet));
+  showScene(s.scene);
   document.querySelector('meta[name="theme-color"]').content = GIRL_BG[g] || GIRL_BG.b;
   assetsReady.then(() => {
     girlView.set(g);
@@ -1761,6 +1762,38 @@ export function showCharacters(s) {
   }
   $('girlImg').alt = s.girls[g] ? s.girls[g].name : '';
   $('petImg').alt = s.pets[p] ? s.pets[p].name : '';
+}
+
+// ---- the place she is in ------------------------------------------------------------
+// The scene from the server (activity.js): { key, night }. Two pictures, one shown: a new
+// place loads into the hidden one, then they cross-fade. 'plain' shows no picture.
+let sceneFocus = {};
+fetch('/img/scene/scenes.json')
+  .then((r) => r.json())
+  .then((j) => (sceneFocus = j))
+  .catch(() => {});
+let sceneUrl;
+export function showScene(scene) {
+  const box = $('scene');
+  if (!box) return;
+  const url = scene && scene.key !== 'plain' ? `/img/scene/${scene.key}_${scene.night ? 'night' : 'day'}.webp` : null;
+  document.body.classList.toggle('has-scene', Boolean(url));
+  if (url === sceneUrl) return;
+  sceneUrl = url;
+  const [a, b] = box.querySelectorAll('img');
+  const shown = a.classList.contains('on') ? a : b;
+  const next = shown === a ? b : a;
+  if (!url) {
+    shown.classList.remove('on');
+    return;
+  }
+  next.onload = () => {
+    if (sceneUrl !== url) return; // moved on again meanwhile
+    next.classList.add('on');
+    shown.classList.remove('on');
+  };
+  next.style.setProperty('--focus', `${Math.round((sceneFocus[scene.key] ?? 0.5) * 100)}%`);
+  next.src = url;
 }
 
 // The page has been woken with a tap: sound on, the characters move.

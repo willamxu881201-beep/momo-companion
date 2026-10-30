@@ -125,12 +125,15 @@ function renderTemplates(s) {
   $('templates').replaceChildren(
     ...(s.templates.length
       ? s.templates.map((t) => h('li', {},
-          h('span', { class: 'grow' }, `${t.icon || ''} ${t.title}`, h('br'), h('small', { class: 'hint' }, `${t.time || '不定时'} · ${t.minutes} 分钟 · ${dayText(t.days)}${t.active ? '' : ' · 已停用'}`)),
+          h('span', { class: 'grow' }, `${t.icon || ''} ${t.title}`, h('br'), h('small', { class: 'hint' }, `${t.time || '不定时'} · ${t.minutes} 分钟 · ${dayText(t.days)}${t.scene && s.places[t.scene] ? ` · 在${s.places[t.scene]}` : t.scene === 'none' ? ' · 不换地方' : ''}${t.active ? '' : ' · 已停用'}`)),
           h('button', { class: 'small secondary', type: 'button', onclick: () => editTemplate(t) }, '编辑'),
           h('button', { class: 'small no', type: 'button', onclick: () => act(`/api/parent/templates/${t.id}/delete`, {}) }, '删除'),
         ))
       : [h('li', { class: 'empty' }, '还没有任务')]),
   );
+  if (!$('tplScene').options.length) {
+    $('tplScene').append(h('option', { value: '' }, '按任务名自动'), ...Object.entries(s.places).map(([k, v]) => h('option', { value: k }, v)), h('option', { value: 'none' }, '不换地方'));
+  }
   if (!$('tplWeekdays').children.length) {
     $('tplWeekdays').append(h('legend', {}, '星期'), ...[1, 2, 3, 4, 5, 6, 0].map((d) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: d }), `周${WEEK[d]}`)));
   }
@@ -149,6 +152,7 @@ function editTemplate(t) {
   const picked = custom ? String(t.days).split(',') : [];
   $('tplWeekdays').querySelectorAll('input').forEach((i) => (i.checked = picked.includes(i.value)));
   $('tplActive').checked = !!t.active;
+  $('tplScene').value = t.scene || '';
   $('tplCancel').hidden = false;
   $('tplForm').scrollIntoView({ behavior: 'smooth' });
 }
@@ -246,6 +250,7 @@ $('tplForm').addEventListener('submit', async (e) => {
     minutes: Number($('tplMinutes').value),
     days,
     active: $('tplActive').checked,
+    scene: $('tplScene').value || null,
   });
   if (ok) resetTemplateForm();
 });

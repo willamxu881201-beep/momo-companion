@@ -6,6 +6,7 @@
 import { addDays, dateZh, nowIn, timeToMinutes } from './dates.js';
 import { cycleDay, describeDay, nextSchoolDay } from './schedule.js';
 import { GIRLS, PETS, stageFor } from './characters.js';
+import { SCENES, activityOf } from './activity.js';
 
 export const POINTS = {
   task: 10, // Mom confirmed a task
@@ -24,8 +25,10 @@ export class Family {
     this.clock = clock;
   }
 
+  // { date, time, minutes } in the family's time zone, and ms (the clock's own).
   now() {
-    return nowIn(this.timeZone, this.clock());
+    const at = this.clock();
+    return { ...nowIn(this.timeZone, at), ms: at.getTime() };
   }
 
   day(date) {
@@ -47,6 +50,7 @@ export class Family {
       kidName: p.kidName || 'MoMo',
       girl,
       pet,
+      scene: SCENES[p.scene] && SCENES[p.scene].free ? p.scene : 'courtyard', // where free time is spent
       girlInfo: { ...GIRLS[girl], voice: voices[girl] || GIRLS[girl].voice },
       petInfo: PETS[pet],
     };
@@ -64,12 +68,14 @@ export class Family {
     const tomorrow = this.day(tomorrowDate);
     const cfg = this.store.cycleConfig();
     const next = tomorrow.day ? null : nextSchoolDay(cfg, tomorrowDate);
+    const tasks = this.tasks(now.date);
     return {
       now,
       today,
       tomorrow,
       nextSchool: next ? this.day(next) : null,
-      tasks: this.tasks(now.date),
+      tasks,
+      activity: activityOf(tasks, now), // what MoMo is doing now, if anything
       alarms: this.store.pendingAlarms(),
       affinity: this.affinity(),
       profile: this.profile(),
@@ -78,6 +84,18 @@ export class Family {
   }
 
   // ---- actions -------------------------------------------------------------
+
+  // MoMo is starting a task now (she tapped it, or said so).
+  startTask(taskId) {
+    const t = this.store.getInstance(taskId);
+    const now = this.now();
+    if (!t || t.date !== now.date) return { ok: false, reason: '今天没有这件任务' };
+    if (t.status === 'waiting' || t.status === 'confirmed') return { ok: false, reason: '这件任务已经做完了' };
+    this.store.setStarted(t.id, now.ms);
+    // Started: the companion needn't say it's time, or ask whether she's begun.
+    for (const key of ['soon', 'start', 'nudge']) if (!t.coached.split(',').includes(key)) this.store.markCoached(t.id, key);
+    return { ok: true, task: this.store.getInstance(t.id) };
+  }
 
   markDone(taskId) {
     const t = this.store.getInstance(taskId);
@@ -225,6 +243,12 @@ export class Family {
       );
     } else {
       lines.push('今天没有安排任务');
+    }
+    const act = snap.activity;
+    if (act) {
+      const place = act.scene ? `，在${SCENES[act.scene].name}` : '';
+      const from = nowIn(this.timeZone, new Date(act.from)).time;
+      lines.push(act.started ? `现在正在做：${act.task.title}（${from} 开始的，计划 ${act.task.minutes} 分钟${place}）` : `现在是「${act.task.title}」的时间（${from} 开始，约 ${act.task.minutes} 分钟${place}）`);
     }
     lines.push(
       snap.alarms.length

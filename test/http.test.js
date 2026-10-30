@@ -24,7 +24,8 @@ const auth = new Auth(store, { parentPassword: 'test-password' });
 const sent = [];
 const hub = { size: 1, send: (e) => sent.push(e) };
 const config = { publicUrl: '', parentPassword: 'test-password', limits: { chatPerDay: 80, asrPerDay: 150, ttsCharsPerDay: 20000 } };
-const server = createServer(createHandler({ config, store, family, brain: {}, auth, hub, webDir }));
+const brain = { forget() {} }; // (the routes here don't talk)
+const server = createServer(createHandler({ config, store, family, brain, auth, hub, webDir }));
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 after(() => {
@@ -166,4 +167,30 @@ test("Mom's review is cheered on the tablet, but only refreshed at night", async
   res = await review(task.id, false);
   await res.arrayBuffer();
   assert.deepEqual(sent, [{ type: 'refresh' }]);
+});
+
+test('the tablet is told where she is; MoMo can start a task, and choose where free time is spent', async () => {
+  const { cookie: kid } = await openKidLink(auth.kidKey());
+  const headers = { Cookie: kid, 'Content-Type': 'application/json' };
+  const state = async () => (await get('/api/state', headers)).json();
+  const post = (path, body) => fetch(base + path, { method: 'POST', headers, body: JSON.stringify(body) });
+
+  store.saveTemplate({ title: '练琴', time: '19:30', minutes: 20, days: 'every' });
+  at = new Date('2026-10-28T10:00:00Z'); // 18:00: free time
+  let s = await state();
+  assert.equal(s.activity, null);
+  assert.deepEqual(s.scene, { key: 'courtyard', night: false });
+
+  const piano = s.tasks.find((t) => t.title === '练琴');
+  const started = await (await post(`/api/tasks/${piano.id}/start`, {})).json();
+  assert.equal(started.line, '好嘞，我们去琴房！练琴，开始～');
+  assert.deepEqual(started.state.scene, { key: 'piano', night: false });
+  assert.deepEqual([started.state.activity.title, started.state.activity.started], ['练琴', true]);
+
+  at = new Date('2026-10-28T11:00:00Z'); // 19:00: the started task has run its time (its own is 19:30); free time, at night
+  assert.equal((await (await post('/api/profile', { scene: 'sky' })).json()).state.profile.scene, 'sky');
+  s = await state();
+  assert.deepEqual(s.scene, { key: 'sky', night: true });
+  assert.equal((await post('/api/profile', { scene: 'study' })).status, 400, 'free time is not spent in the study');
+  at = new Date('2026-10-28T08:05:00Z');
 });

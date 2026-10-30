@@ -1,6 +1,7 @@
 // Live pushes (Server-Sent Events) to the tablet and to Mom's page, and the
-// minute-by-minute scheduler that fires task reminders and alarms, passes on Mom's
-// messages once the tablet is on, and clears out old photos and old records.
+// half-minute scheduler that rings alarms, lets the companion speak up about the day's
+// tasks (coach.js), passes on Mom's messages once the tablet is on, and clears out old
+// photos and old records.
 
 import { timeToMinutes } from './dates.js';
 
@@ -38,13 +39,6 @@ export class Hub {
   }
 }
 
-const REMIND = {
-  a: (kid, t) => `${kid}，${t}的时间到了呢，我陪着你，慢慢来呀。`,
-  b: (kid, t) => `${kid}，${t}时间到！出发，拿下它！`,
-  c: (kid, t) => `${kid}，该${t}啦，做完了回来告诉我呀。`,
-  d: (kid, t) => `提醒：${kid}，现在是${t}时间，准备好了就开始吧。`,
-};
-const NUDGE = (kid, t) => `${kid}，${t}开始了吗？先做五分钟也很棒哦。`;
 const ALARM = (kid, label) => `${kid}，${label}时间到啦！`;
 
 const KEEP_DAYS = 90; // the day's record and the messages; photos go after a week (files.js)
@@ -57,10 +51,12 @@ export function inQuiet(minutes, quiet) {
 }
 
 export class Scheduler {
-  // post and files are optional: messages to pass on, photos to clear out.
-  constructor(family, hub, { post = null, files = null } = {}) {
+  // All optional: coach (what the companion says about the tasks), post (messages to
+  // pass on), files (photos to clear out).
+  constructor(family, hub, { coach = null, post = null, files = null } = {}) {
     this.family = family;
     this.hub = hub;
+    this.coach = coach;
     this.post = post;
     this.files = files;
   }
@@ -71,10 +67,12 @@ export class Scheduler {
     this.tick();
   }
 
+  // Resolves when the coach has spoken (its line can take the model a few seconds).
   tick() {
+    let spoke = Promise.resolve(null);
     try {
       this.checkAlarms();
-      this.checkTasks();
+      if (this.coach) spoke = this.coach.tick().catch((err) => console.error('[coach]', err));
       if (this.post) this.post.offer();
       if (Date.now() - (this.swept || 0) > 3600000) {
         this.swept = Date.now();
@@ -84,6 +82,7 @@ export class Scheduler {
     } catch (err) {
       console.error('[scheduler]', err);
     }
+    return spoke;
   }
 
   checkAlarms() {
@@ -100,26 +99,6 @@ export class Scheduler {
       if (!stale) {
         this.hub.send({ type: 'alarm', alarm: a, line: ALARM(kidName, a.label) });
         this.family.log('tablet', 'alarm', `闹钟响了：${a.label}`);
-      }
-    }
-  }
-
-  checkTasks() {
-    const { store } = this.family;
-    const now = this.family.now();
-    if (inQuiet(now.minutes, store.getSetting('quiet')) || this.hub.size === 0) return;
-    const { kidName, girl } = this.family.profile();
-    for (const t of this.family.tasks(now.date)) {
-      if (t.status !== 'todo') continue;
-      const start = timeToMinutes(t.time);
-      if (start === null) continue;
-      if (t.reminded === 0 && now.minutes >= start && now.minutes < start + 10) {
-        store.markReminded(t.id, 1);
-        this.hub.send({ type: 'reminder', task: t, line: (REMIND[girl] || REMIND.b)(kidName, t.title) });
-        this.family.log('tablet', 'reminder', `提醒了${kidName}：${t.title}`);
-      } else if (t.reminded === 1 && now.minutes >= start + 15 && now.minutes < start + 25) {
-        store.markReminded(t.id, 2);
-        this.hub.send({ type: 'reminder', task: t, line: NUDGE(kidName, t.title), gentle: true });
       }
     }
   }

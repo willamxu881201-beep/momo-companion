@@ -4,12 +4,14 @@
 #   tools/browser/run.sh devices      the kid screen on 11 screen sizes
 #   tools/browser/run.sh mom          Mom's page: chat, look-ins, pushes while it is closed
 #   tools/browser/run.sh voice        the streamed voice: seams, timing, the autoplay rule
+#   tools/browser/run.sh scenes       every place by day and night; a task comes due and she speaks up
+#   tools/browser/run.sh docs --real  documents read and asked about, with the real models
 #   tools/browser/run.sh e2e --real   everything with the real models (needs ARK_API_KEY)
 # Screenshots and the server's log go to tools/browser/out/<check>/.
 # Needs Playwright's Chromium: npm install --no-save playwright && npx playwright install chromium
 set -euo pipefail
 
-CHECK=${1:?"which check: devices, mom, voice or e2e"}
+CHECK=${1:?"which check: devices, mom, voice, scenes, docs or e2e"}
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 PORT=${PORT:-8091}

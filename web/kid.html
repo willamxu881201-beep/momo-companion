@@ -25,6 +25,7 @@
 </div>
 
 <main id="app" hidden>
+  <div id="scene" class="scene" aria-hidden="true"><img alt=""><img alt=""></div>
   <div class="stage" id="stage">
     <div class="ground" aria-hidden="true"></div>
     <figure class="girl" id="girlFig">
@@ -96,6 +97,8 @@
     <div id="pickGirls" class="pick"></div>
     <h2>选一个一起长大的宠物</h2>
     <div id="pickPets" class="pick"></div>
+    <h2>没有事的时候，在哪儿玩</h2>
+    <div id="pickScenes" class="pick places"></div>
     <button id="pickClose" class="ghost" type="button">好啦</button>
   </div>
 </div>
@@ -104,8 +107,9 @@
   <div class="sheet-card" role="dialog" aria-label="确认">
     <p id="confirmText"></p>
     <div class="row">
+      <button id="confirmStart" type="button" hidden>现在开始</button>
       <button id="confirmYes" type="button">做完啦</button>
-      <button id="confirmNo" class="ghost" type="button">还没有</button>
+      <button id="confirmNo" class="ghost" type="button">算了</button>
     </div>
   </div>
 </div>

@@ -31,4 +31,4 @@ npm 上的包是给 Node.js 编译的，`sherpa-onnx-wasm-nodejs.js` 里有三�
 
 孩子的声音和家里的环境声，要在真的平板上试。
 
-在 Chromium 里，加载和准备好约需 1.8 秒（`tools/browser/run.sh wake`）。第一次要下载约 20 MB，之后浏览器缓存一周。
+在 Chromium 里，加载和准备好约需 1.8 秒（`tools/browser/run.sh wake`）。第一次要下载约 10 MB（程序压缩后 4.4 MB，模型 4.8 MB），之后浏览器缓存一周。

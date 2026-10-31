@@ -673,7 +673,7 @@ export function createHandler({
       headers['Content-Security-Policy'] = CSP;
       headers['Cache-Control'] = 'no-cache';
     } else {
-      headers['Cache-Control'] = /^(img|vid|kws)\//.test(rel) ? 'public, max-age=604800' : 'no-cache'; // (kws: the wake word listener, 20 MB)
+      headers['Cache-Control'] = /^(img|vid|kws)\//.test(rel) ? 'public, max-age=604800' : 'no-cache'; // (kws: the wake word listener, 10 MB to download)
     }
     // Safari won't play a video unless it can fetch byte ranges of it.
     const range = byteRange(req.headers.range, st.size);

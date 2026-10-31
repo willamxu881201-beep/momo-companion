@@ -31,7 +31,7 @@ export async function listenForName({ name, tokens }, onReady = () => {}) {
   if (!ctx || !window.Worker || !window.WebAssembly) return;
   const me = { keywords, ready: false, ring: [], ringLen: 0, resting: true, restedAt: 0, worker: null };
   w = me;
-  // The microphone first: without one, the listener (20 MB) isn't even loaded.
+  // The microphone first: without one, the listener (10 MB to download) isn't even loaded.
   try {
     me.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
   } catch {

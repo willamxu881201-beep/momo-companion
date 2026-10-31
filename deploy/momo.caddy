@@ -1,0 +1,8 @@
+# MoMo 伙伴的网站。由 /opt/momo-companion/deploy/install.sh 生成，每次部署都会重写这个文件，
+# 请不要手动改它；别的网站放在 /etc/caddy/sites/ 下自己的文件里。
+{{DOMAIN}} {
+	encode gzip
+	reverse_proxy 127.0.0.1:{{PORT}} {
+		flush_interval -1
+	}
+}

@@ -1,0 +1,948 @@
+// HTTP routes. No framework: a small table of (method, path) → handler.
+// Pages and assets are served from web/; everything else is JSON under /api.
+
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { extname, join, normalize, sep } from 'node:path';
+import { pipeline } from 'node:stream';
+import { addDays, dateZh, isDate, nowIn, timeToMinutes } from './dates.js';
+import { KID_COOKIE, KID_TTL_S, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
+import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES, callsHer } from './characters.js';
+import { inQuiet } from './events.js';
+import { MIME_EXT } from './files.js';
+import { PART_ZH, TYPE_ZH } from './extract.js';
+import { FREE_SCENES, SCENES, placeOf, sceneOf } from './activity.js';
+import { ARK_ORIGIN } from './ark.js';
+import { warm } from './client.js';
+import { Clip, PCM_RATE, SPEECH_ORIGIN, synthesizeStream, transcribe, transcribeFlash, wavRms, wavSeconds } from './speech.js';
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm', // the wake word listener (web/kws)
+  '.txt': 'text/plain; charset=utf-8',
+};
+const PAGES = { '/': 'kid.html', '/parent': 'parent.html' };
+const CSP =
+  "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; " +
+  "style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const READ_WAIT_MS = 25000; // an upload waits this long for her to read it, then answers "pending"
+const TEXT_PAGE = 20000; // a file's words, as much at a time, on MoMo's page
+// Files shown in the page as they are; any other kind is only ever saved.
+const INLINE = /^(image\/(jpeg|png|gif|webp|bmp)|audio\/[\w.+-]+|video\/[\w.+-]+|application\/pdf|text\/plain)$/;
+
+export function createHandler({
+  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, coach = null, pages = null, webDir,
+  tts = synthesizeStream, flashAsr = transcribeFlash, arkAsr = transcribe,
+}) {
+  // Speech is made once per (voice, line): the chat route starts it as soon as the
+  // reply exists, and the tablet's /api/tts request joins the same clip and gets the
+  // audio as it is made. Finished clips stay for repeats; failed ones are dropped.
+  const clips = new Map();
+  function speech(raw) {
+    const text = String(raw || '').slice(0, 300);
+    if (!text || !config.ttsAppId) return null;
+    const speaker = family.profile().girlInfo.voice;
+    const key = `${speaker}|${text}`;
+    let clip = clips.get(key);
+    if (!clip) {
+      const today = family.now().date;
+      if (store.usage(today, 'tts') + text.length > config.limits.ttsCharsPerDay) return null;
+      store.addUsage(today, 'tts', text.length);
+      clip = new Clip();
+      const t0 = Date.now();
+      let first = 0;
+      const onAudio = (audio) => {
+        if (!first) first = Date.now() - t0;
+        clip.add(audio);
+      };
+      tts({ appId: config.ttsAppId, token: config.ttsToken, speaker, text, onAudio })
+        .then(() => console.log(`[tts] ${text.length} chars: first audio ${first} ms, whole line ${Date.now() - t0} ms`))
+        .catch((err) => {
+          console.error('[tts]', err.message);
+          clips.delete(key);
+        })
+        .finally(() => clip.end());
+      clips.set(key, clip);
+      if (clips.size > 40) clips.delete(clips.keys().next().value); // about 250 KB each
+    }
+    return clip;
+  }
+  // Doubao's flash recogniser is far faster from here than Ark. Until the speech app
+  // has it enabled, fall back to Ark and only try flash again every ten minutes.
+  let flashOffUntil = 0;
+  const routes = [];
+  // opts.limit: largest JSON body; opts.raw: take the body as bytes, up to that size.
+  const on = (method, path, access, fn, opts = {}) => routes.push({ method, path, access, fn, opts });
+  const need = (thing, what) => {
+    if (!thing) throw new HttpError(503, `${what}还没开通`);
+    return thing;
+  };
+
+  // ---- public --------------------------------------------------------------
+
+  on('GET', '/healthz', null, () => ({ ok: true }));
+
+  on('POST', '/api/parent/login', null, (ctx) => {
+    if (!config.parentPassword) throw new HttpError(503, '服务器还没设置家长密码（PARENT_PASSWORD）');
+    const r = auth.login(ctx.ip, String(ctx.body.password || ''));
+    if (!r.ok) throw new HttpError(401, r.reason);
+    ctx.setCookie(cookie(PARENT_COOKIE, r.token, { maxAge: r.maxAge, secure: ctx.secure }));
+    return { ok: true };
+  });
+
+  // ---- the kid page (anyone with the kid link; Mom's session works too) ------
+
+  on('GET', '/api/state', 'kid', () => kidState());
+
+  on('GET', '/api/events', 'kid', (ctx) => {
+    hub.attach(ctx.req, ctx.res, () => post && post.offer({ fresh: true })); // Mom's words that are still waiting
+    return undefined; // response stays open
+  });
+
+  on('POST', '/api/chat', 'kid', async (ctx) => {
+    const today = family.now().date;
+    if (store.usage(today, 'chat') >= config.limits.chatPerDay) {
+      return { reply: '今天我们聊了好多啦，我的嗓子要休息一下，明天再陪你聊好不好？', petAction: null, actions: [], limited: true };
+    }
+    store.addUsage(today, 'chat');
+    if (coach && ctx.kid) coach.heard(); // she is talking: the companion won't speak up over her
+    // The voice for the character's first answer starts while the router still decides;
+    // if a tool changes the answer, that clip just goes unused.
+    const r = await brain.reply(ctx.kid ? 'kid' : 'parent', ctx.body.text, { onEarly: speech });
+    speech(r.reply);
+    return { ...r, state: kidState() };
+  });
+
+  // Any file for the companion (from MoMo's page or Mom's): the body is the file itself,
+  // written to disk as it comes; ?name= is its name. It is kept, and she reads it: what
+  // she reads within READ_WAIT_MS is answered here; a slower one ("pending") is told on
+  // the sender's page when she's done.
+  on('POST', '/api/upload', 'kid', async (ctx) => {
+    const mime = String(ctx.req.headers['content-type'] || '').split(';')[0].trim();
+    const who = ctx.kid ? 'kid' : 'mom';
+    const name = ctx.url.searchParams.get('name') || '';
+    const t0 = Date.now();
+    const id = await need(files, '文件').receive(ctx.req, { who, name, mime, max: config.limits.uploadBytes });
+    const reading = need(eyes, '看文件').take(id);
+    const r = await Promise.race([reading, new Promise((done) => setTimeout(done, config.readWaitMs ?? READ_WAIT_MS, null))]);
+    const size = `${Math.round(store.getFile(id).bytes / 1024)} KB`;
+    if (!r) {
+      console.log(`[eyes] ${who} sent ${size}: still reading after ${Date.now() - t0} ms`);
+      reading.then((late) => {
+        console.log(`[eyes] ${who}'s ${size}: ${late.kind}, ${late.changes.length} changes, ${Date.now() - t0} ms`);
+        eyes.tell(who, late);
+        if (late.changes.length) hub.send({ type: 'refresh' });
+      });
+      const line = '收到啦，我先帮你存好了。这个有点长，我慢慢读，读完马上告诉你。';
+      speech(line);
+      return { pending: true, fileId: id, kind: 'reading', changes: [], line, state: kidState() };
+    }
+    console.log(`[eyes] ${who} sent ${size}: ${r.kind}, ${r.changes.length} changes, ${Date.now() - t0} ms`);
+    speech(r.line);
+    return { ...r, state: kidState() };
+  }, { stream: true });
+
+  // MoMo's files: what she sent and what Mom shared with her, newest first (?offset= for
+  // more). fresh: Mom shared it since MoMo last looked.
+  on('GET', '/api/files', 'kid', (ctx) => {
+    const seen = store.getSetting('kidFilesSeen');
+    const offset = Math.max(0, Number(ctx.url.searchParams.get('offset')) || 0);
+    const list = store.listUploads({ forKid: true, offset, limit: 30 });
+    return { ...store.kidFileCount(seen), offset, files: list.map((f) => ({ ...fileCard(f), fresh: f.who === 'mom' && f.shown_at > seen })) };
+  });
+
+  // She has looked at them: none is new any more.
+  on('POST', '/api/files/seen', 'kid', (ctx) => {
+    if (ctx.kid) store.setSetting('kidFilesSeen', Date.now());
+    return { ok: true, state: kidState() };
+  });
+
+  // One of her files, opened: its card and its words (?from= for the next page of them).
+  // The companion now knows which file she means when she asks about "this".
+  on('GET', '/api/files/:id/card', 'kid', (ctx) => {
+    const f = kidFile(ctx.params.id);
+    if (ctx.kid && eyes) eyes.open(f.id);
+    const text = store.getFileText(f.id) || '';
+    const from = Math.min(Math.max(0, Number(ctx.url.searchParams.get('from')) || 0), text.length);
+    return { ...fileCard(f), text: text.slice(from, from + TEXT_PAGE), from, more: from + TEXT_PAGE < text.length };
+  });
+
+  // The file itself, for her page: a picture shown, music or a video played, the rest saved.
+  on('GET', '/api/files/:id', 'kid', (ctx) => fileResponse(ctx, kidFile(ctx.params.id)));
+
+  // ---- a file page by page, to look at and to point at (the viewer on both pages) ----
+
+  // How many pages it has as pictures (0: it is words only, or to play or save), and
+  // where a homework page's problems are.
+  on('GET', '/api/files/:id/pages', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    let shown = null;
+    try {
+      shown = await need(pages, '页面').count(f);
+    } catch (err) {
+      console.warn('[pages]', err.message);
+    }
+    return { pages: shown ? shown.n : 0, kind: shown ? shown.kind : null, title: titleOf(f), problems: problemsOf(f) };
+  });
+
+  on('GET', '/api/files/:id/pages/:n', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    const p = await pageOf(f, ctx.params.n);
+    return { status: 200, type: p.type, headers: { 'Cache-Control': 'private, max-age=86400' }, stream: createReadStream(p.path) };
+  });
+
+  // Someone touched a spot on a page ({ page, x, y }: x, y from 0 to 1) and asks about
+  // it (question, or "这是什么？"): she answers in her own way and says where the thing
+  // is ({ reply, box }). A homework page is helped with, not answered. It is part of the
+  // conversation: what is asked next knows what it was about.
+  on('POST', '/api/files/:id/point', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    const today = family.now().date;
+    if (store.usage(today, 'point') >= config.limits.pointPerDay) return { reply: '今天问得好多啦，明天再一起看吧。', box: null, limited: true };
+    const p = await pageOf(f, ctx.body.page);
+    store.addUsage(today, 'point');
+    if (coach && ctx.kid) coach.heard(); // she is asking: the companion won't speak up over her
+    const unit = (v) => Math.min(1, Math.max(0, Number(v) || 0));
+    const question = String(ctx.body.question || '').trim().slice(0, 100) || '这是什么？';
+    const r = await need(eyes, '看文件').pointAt({
+      image: `data:${p.type};base64,${readFileSync(p.path).toString('base64')}`,
+      x: unit(ctx.body.x),
+      y: unit(ctx.body.y),
+      question,
+      who: ctx.kid ? 'kid' : 'mom',
+      title: titleOf(f),
+      homework: Boolean(f.result && f.result.kind === 'homework_page'),
+    });
+    if (!r.reply) throw new HttpError(502, '这里我没看清');
+    speech(r.reply);
+    brain.remember(ctx.kid ? 'kid' : 'mom', `（指着《${titleOf(f)}》第 ${p.n} 页上的一处）${question}`, r.reply);
+    return { reply: r.reply, box: r.box, page: p.n };
+  });
+
+  // Where on a page what was asked or said is, to mark it ({ page, text } → { box }). A
+  // homework page's "第三题" is known from reading it; anything else is looked for on
+  // the page, unless quick: only what is known at once.
+  on('POST', '/api/files/:id/find', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    const text = String(ctx.body.text || '').slice(0, 300);
+    const known = problemIn(f, text);
+    if (known) return { box: known.box, n: known.n };
+    if (ctx.body.quick || !text.trim()) return { box: null };
+    const today = family.now().date;
+    if (store.usage(today, 'find') >= config.limits.findPerDay) return { box: null, limited: true };
+    const p = await pageOf(f, ctx.body.page);
+    store.addUsage(today, 'find');
+    const box = await need(eyes, '看文件').findOnPage({ image: `data:${p.type};base64,${readFileSync(p.path).toString('base64')}`, text }).catch((err) => {
+      console.warn('[find]', err.message);
+      return null;
+    });
+    return { box };
+  });
+
+  // The tablet's answer to a check-in: { image: JPEG base64, wav?: base64, error? }.
+  on('POST', '/api/checks/:id', 'kid', (ctx) => {
+    const r = need(eyes, '查看').answer(ctx.params.id, ctx.body);
+    if (!r.ok) throw new HttpError(404, '这次查看已经结束了');
+    return { ok: true };
+  }, { limit: 6_000_000 });
+
+  // The tablet has said one of Mom's messages out loud.
+  on('POST', '/api/messages/:id/heard', 'kid', (ctx) => {
+    need(post, '传话').heard(ctx.params.id);
+    return { ok: true };
+  });
+
+  // What was said. wake: the tablet heard the companion's name (语音唤醒) and wants to know
+  // whether it really was her name ({ called }) and what was said after it ({ rest }).
+  on('POST', '/api/asr', 'kid', async (ctx) => {
+    const wav = Buffer.from(String(ctx.body.wav || ''), 'base64');
+    const profile = store.getSetting('profile');
+    // The names that may be said, to be written just so: the companions, the pets, MoMo.
+    const names = [...Object.values(GIRLS).map((g) => g.name), ...Object.values(PETS).map((p) => p.name), profile.kidName].filter(Boolean);
+    const answer = (text) => (ctx.body.wake ? { text, ...callsHer(GIRLS[profile.girl], text) } : { text });
+    const seconds = wavSeconds(wav);
+    if (seconds < 0.3) return { text: '', reason: 'short' };
+    if (seconds > 30) throw new HttpError(413, '说得太长啦，30 秒以内哦');
+    if (wavRms(wav) < 0.008) return { text: '', reason: 'quiet' };
+    const today = family.now().date;
+    if (store.usage(today, 'asr') >= config.limits.asrPerDay) throw new HttpError(429, '今天的语音次数用完了');
+    store.addUsage(today, 'asr');
+    const t0 = Date.now();
+    const took = (how) => console.log(`[asr] ${how} ${Date.now() - t0} ms for ${seconds.toFixed(1)} s of speech`);
+    if (config.ttsAppId && Date.now() > flashOffUntil) {
+      try {
+        const text = await flashAsr({ appId: config.ttsAppId, token: config.ttsToken, wav, hotwords: names });
+        took('flash');
+        return answer(text);
+      } catch (err) {
+        // Not granted, or the keys are refused: stop asking for a while. Anything else
+        // (busy, a network hiccup) only sends this one clip to Ark.
+        if (err.code === 45000030 || err.status === 401 || err.status === 403) flashOffUntil = Date.now() + 10 * 60000;
+        console.warn('[asr] flash recogniser not used:', err.message);
+      }
+    }
+    const text = await arkAsr({ apiKey: config.arkApiKey, model: config.asrModel, wavBase64: wav.toString('base64'), names });
+    took('ark');
+    return answer(text);
+  });
+
+  // A kid page just woke up: note its screen and browser, to tune the layout for real devices.
+  on('POST', '/api/hello', 'kid', (ctx) => {
+    const n = (v) => Math.round(Math.min(Math.max(Number(v) || 0, 0), 10000) * 100) / 100;
+    const ua = String(ctx.req.headers['user-agent'] || '').replace(/[^\x20-\x7e]/g, '').slice(0, 240);
+    console.log(`[kid] screen ${n(ctx.body.w)}x${n(ctx.body.h)} @${n(ctx.body.dpr)} ${ua}`);
+    return { ok: true };
+  });
+
+  // The mic just opened: get connections ready while the child talks.
+  on('POST', '/api/warm', 'kid', () => {
+    warm([ARK_ORIGIN], 2);
+    if (config.ttsAppId) warm([SPEECH_ORIGIN]);
+    return { ok: true };
+  });
+
+  // The voice as it is made: PCM pieces, sent the moment they arrive. 204 means no
+  // voice for this line (none configured, over the daily limit, or the service
+  // failed), and the tablet uses its own.
+  on('POST', '/api/tts', 'kid', async (ctx) => {
+    const clip = speech(ctx.body.text);
+    if (!clip) return { status: 204 };
+    await clip.started();
+    if (!clip.chunks.length) return { status: 204 };
+    return { status: 200, type: 'application/octet-stream', headers: { 'X-Audio-Format': `pcm_s16le;rate=${PCM_RATE}` }, stream: clip.read() };
+  });
+
+  // MoMo starts a task now: the scene changes to its place, and her line says so.
+  on('POST', '/api/tasks/:id/start', 'kid', (ctx) => {
+    const r = family.startTask(Number(ctx.params.id));
+    if (!r.ok) throw new HttpError(400, r.reason);
+    const place = placeOf(r.task);
+    const line = place ? `好嘞，我们去${SCENES[place].name}！${r.task.title}，开始～` : `好嘞，${r.task.title}，开始～`;
+    speech(line);
+    return { ok: true, line, state: kidState() };
+  });
+
+  on('POST', '/api/tasks/:id/done', 'kid', (ctx) => {
+    const r = family.markDone(Number(ctx.params.id));
+    if (!r.ok) throw new HttpError(400, r.reason);
+    return { ok: true, state: kidState() };
+  });
+
+  on('POST', '/api/profile', 'kid', (ctx) => {
+    const hidden = store.getSetting('hidden');
+    const p = store.getSetting('profile');
+    const { girl, pet, scene } = ctx.body;
+    if (scene !== undefined) {
+      if (!FREE_SCENES.includes(scene)) throw new HttpError(400, '没有这个地方');
+      p.scene = scene;
+    }
+    if (girl !== undefined) {
+      if (!GIRLS[girl] || hidden.girls.includes(girl)) throw new HttpError(400, '没有这个伙伴');
+      p.girl = girl;
+    }
+    if (pet !== undefined) {
+      if (!PETS[pet] || hidden.pets.includes(String(pet))) throw new HttpError(400, '没有这个宠物');
+      p.pet = String(pet);
+    }
+    store.setSetting('profile', p);
+    brain.forget(ctx.kid ? 'kid' : 'parent');
+    return { ok: true, state: kidState() };
+  });
+
+  // ---- Mom -------------------------------------------------------------------
+
+  on('POST', '/api/parent/logout', 'parent', (ctx) => {
+    auth.logout(ctx.cookies);
+    ctx.setCookie(cookie(PARENT_COOKIE, '', { maxAge: 0, secure: ctx.secure }));
+    return { ok: true };
+  });
+
+  on('GET', '/api/parent/state', 'parent', () => parentState());
+
+  // Mom's page, live: the day's new events, check-in results, MoMo's messages.
+  on('GET', '/api/parent/events', 'parent', (ctx) => {
+    need(momHub, '妈妈页面的推送').attach(ctx.req, ctx.res);
+    return undefined;
+  });
+
+  // Mom talking with the companion.
+  on('POST', '/api/parent/chat', 'parent', async (ctx) => {
+    const today = family.now().date;
+    if (store.usage(today, 'momchat') >= config.limits.momChatPerDay) return { reply: '今天我们聊得太多啦，明天再说吧。', actions: [], limited: true };
+    store.addUsage(today, 'momchat');
+    const r = await brain.momReply(ctx.body.text);
+    speech(r.reply);
+    return r;
+  });
+
+  // Mom's buttons: look in on MoMo now; pass her a message.
+  on('POST', '/api/parent/check', 'parent', (ctx) => {
+    const r = need(eyes, '查看').check(String(ctx.body.what || 'look'));
+    speech(r.text);
+    return r;
+  });
+
+  on('POST', '/api/parent/tell', 'parent', (ctx) => {
+    const id = need(post, '传话').toKid(ctx.body.text);
+    if (!id) throw new HttpError(400, '要说的话是空的');
+    return { ok: true, id, tablets: hub.size, quiet: inQuiet(family.now().minutes, store.getSetting('quiet')) };
+  });
+
+  // The day's record (newest first), with MoMo's messages Mom hasn't seen yet.
+  on('GET', '/api/parent/feed', 'parent', (ctx) => {
+    const date = isDate(ctx.url.searchParams.get('date')) ? ctx.url.searchParams.get('date') : family.now().date;
+    const events = store.listEvents(date, 80).map((e) => ({
+      id: e.id, at: e.at, who: e.who, kind: e.kind, text: e.text, fileId: e.file_kind ? e.file_id : null, doc: e.file_kind === 'doc' || e.file_kind === 'file',
+      undo: Boolean(e.data && (e.data.courses || (e.data.added && e.data.added.length)) && !e.data.undone),
+      undone: Boolean(e.data && e.data.undone),
+    }));
+    return { date, events, unread: post ? post.unreadForMom() : [] };
+  });
+
+  // A photo or file, any of them (Mom's page), sent a piece at a time; ?download=1 saves
+  // it under its own name.
+  on('GET', '/api/parent/files/:id', 'parent', (ctx) => fileResponse(ctx, store.getFile(Number(ctx.params.id))));
+
+  // A file's card: what it is, how far reading it got, who may ask about it, and what
+  // the companion made of it (a document: title, gist, points, dates, things to do).
+  on('GET', '/api/parent/docs/:id', 'parent', (ctx) => {
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    return fileCard(f);
+  });
+
+  // All the files people sent, newest first, or those that best match ?q= (names,
+  // summaries and what is in them); ?offset= for more.
+  on('GET', '/api/parent/library', 'parent', (ctx) => {
+    const q = String(ctx.url.searchParams.get('q') || '').trim().slice(0, 60);
+    const offset = Math.max(0, Number(ctx.url.searchParams.get('offset')) || 0);
+    let list;
+    if (q) {
+      // Files called that first, then those with it in them.
+      const hits = need(eyes, '文件').search(q, { limit: 30 });
+      const named = store.listUploads({ limit: 1000 }).filter((f) => f.name.includes(q));
+      const inside = store.listUploads({ ids: hits.map((h) => h.id) }).filter((f) => !named.some((n) => n.id === f.id));
+      list = [...named, ...inside].map((f) => ({ ...f, snippet: (hits.find((h) => h.id === f.id) || {}).snippet }));
+    } else list = store.listUploads({ offset, limit: 30 });
+    return { ...store.uploadStats(), q, offset, files: list.map((f) => ({ ...fileCard(f), snippet: f.snippet || '' })) };
+  });
+
+  // Mom decides whether the companion may use a file with MoMo too.
+  on('POST', '/api/parent/files/:id/share', 'parent', (ctx) => {
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    if (f.who === 'kid') throw new HttpError(400, '沫沫发的文件，她都能看');
+    if (store.setFileShared(f.id, Boolean(ctx.body.kid)) && eyes) eyes.offer(f, f.result);
+    return fileCard(store.getFile(f.id));
+  });
+
+  on('POST', '/api/parent/files/:id/delete', 'parent', (ctx) => {
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    files.remove(f.id);
+    if (eyes) eyes.forgetText(f.id);
+    return { ok: true, ...store.uploadStats() };
+  });
+
+  // Read a file again (one she couldn't read, or to read it afresh).
+  on('POST', '/api/parent/files/:id/reread', 'parent', (ctx) => {
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    need(eyes, '看文件').resume([f.id]);
+    return fileCard(store.getFile(f.id));
+  });
+
+  // Takes back what a photo changed: the old timetable, or the homework tasks it added.
+  on('POST', '/api/parent/undo/:id', 'parent', (ctx) => {
+    const e = store.getEvent(Number(ctx.params.id));
+    if (!e || !e.data || e.data.undone) throw new HttpError(404, '没有可以撤销的');
+    family.undo(e.data);
+    store.setEventData(e.id, { ...e.data, undone: true });
+    family.log('mom', 'undo', `妈妈撤销了：${e.text}`);
+    hub.send({ type: 'refresh' });
+    return parentState();
+  });
+
+  on('POST', '/api/parent/cycle', 'parent', (ctx) => {
+    const b = ctx.body;
+    const cycleLength = Number(b.cycleLength) || 6;
+    if (cycleLength < 2 || cycleLength > 10) throw new HttpError(400, '轮换天数要在 2 到 10 之间');
+    if (b.anchorDate && !isDate(b.anchorDate)) throw new HttpError(400, '日期格式不对');
+    const anchorDay = b.anchorDay ? Number(b.anchorDay) : null;
+    if (anchorDay !== null && (anchorDay < 1 || anchorDay > cycleLength)) throw new HttpError(400, `D 几要在 1 到 ${cycleLength} 之间`);
+    const schoolWeekdays = Array.isArray(b.schoolWeekdays) ? b.schoolWeekdays.map(Number).filter((n) => n >= 0 && n <= 6) : [1, 2, 3, 4, 5];
+    store.setSetting('cycle', { cycleLength, anchorDate: b.anchorDate || null, anchorDay, schoolWeekdays });
+    return parentState();
+  });
+
+  on('POST', '/api/parent/courses', 'parent', (ctx) => {
+    const day = Number(ctx.body.day);
+    const n = store.getSetting('cycle').cycleLength;
+    if (!(day >= 1 && day <= n)) throw new HttpError(400, `D 几要在 1 到 ${n} 之间`);
+    const list = (Array.isArray(ctx.body.list) ? ctx.body.list : [])
+      .map((c) => ({ name: String(c.name || '').trim().slice(0, 20), note: String(c.note || '').trim().slice(0, 30) }))
+      .filter((c) => c.name);
+    store.setCourses(day, list.slice(0, 12));
+    return parentState();
+  });
+
+  on('POST', '/api/parent/override', 'parent', (ctx) => {
+    const { date, value, note } = ctx.body;
+    if (!isDate(date)) throw new HttpError(400, '日期格式不对');
+    if (value !== null && value !== 'off' && !(Number(value) >= 1)) throw new HttpError(400, '只能设成"放假"或 D 几');
+    store.setOverride(date, value === 'off' || value === null ? value : Number(value), String(note || '').slice(0, 20));
+    return parentState();
+  });
+
+  on('POST', '/api/parent/holidays', 'parent', (ctx) => {
+    const { from, to, note } = ctx.body;
+    if (!isDate(from) || !isDate(to) || to < from) throw new HttpError(400, '日期范围不对');
+    let n = 0;
+    for (let d = from; d <= to && n < 120; d = addDays(d, 1), n += 1) store.setOverride(d, 'off', String(note || '假期').slice(0, 20));
+    return parentState();
+  });
+
+  on('POST', '/api/parent/templates', 'parent', (ctx) => {
+    const t = ctx.body;
+    const title = String(t.title || '').trim().slice(0, 20);
+    if (!title) throw new HttpError(400, '任务名不能为空');
+    if (t.time && timeToMinutes(t.time) === null) throw new HttpError(400, '时间格式是 HH:MM，比如 16:30');
+    const scene = t.scene === 'none' || (SCENES[t.scene] && !SCENES[t.scene].free) ? t.scene : null; // null: by its name
+    store.saveTemplate({ ...t, title, icon: String(t.icon || '').slice(0, 4), minutes: Math.min(Math.max(Number(t.minutes) || 30, 5), 240), scene });
+    return parentState();
+  });
+
+  on('POST', '/api/parent/templates/:id/delete', 'parent', (ctx) => {
+    store.deleteTemplate(Number(ctx.params.id));
+    return parentState();
+  });
+
+  on('POST', '/api/parent/review', 'parent', (ctx) => {
+    const approve = Boolean(ctx.body.approve);
+    const r = family.review(Number(ctx.body.id), approve);
+    if (!r.ok) throw new HttpError(404, '找不到这件任务');
+    // The tablet cheers out loud, except at night when it only updates quietly.
+    const asleep = inQuiet(family.now().minutes, store.getSetting('quiet'));
+    hub.send(asleep ? { type: 'refresh' } : { type: 'reviewed', approve, title: r.task.title, points: r.points });
+    return parentState();
+  });
+
+  on('POST', '/api/parent/settings', 'parent', (ctx) => {
+    const b = ctx.body;
+    if (b.profile) {
+      const p = store.getSetting('profile');
+      if (b.profile.kidName) p.kidName = String(b.profile.kidName).trim().slice(0, 12) || p.kidName;
+      if (GIRLS[b.profile.girl]) p.girl = b.profile.girl;
+      if (PETS[b.profile.pet]) p.pet = String(b.profile.pet);
+      store.setSetting('profile', p);
+    }
+    if (b.hidden) {
+      const girls = (b.hidden.girls || []).filter((k) => GIRLS[k]);
+      const pets = (b.hidden.pets || []).map(String).filter((k) => PETS[k]);
+      if (girls.length >= Object.keys(GIRLS).length || pets.length >= Object.keys(PETS).length) {
+        throw new HttpError(400, '至少要留一个少女和一个宠物');
+      }
+      store.setSetting('hidden', { girls, pets });
+      const p = store.getSetting('profile');
+      if (girls.includes(p.girl)) p.girl = Object.keys(GIRLS).find((k) => !girls.includes(k));
+      if (pets.includes(p.pet)) p.pet = Object.keys(PETS).find((k) => !pets.includes(k));
+      store.setSetting('profile', p);
+    }
+    if (b.quiet) {
+      if (timeToMinutes(b.quiet.start) === null || timeToMinutes(b.quiet.end) === null) throw new HttpError(400, '安静时间格式是 HH:MM');
+      store.setSetting('quiet', { start: b.quiet.start, end: b.quiet.end });
+    }
+    if (b.voice) {
+      const v = store.getSetting('voice');
+      for (const k of ['followUp', 'wake']) if (k in b.voice) v[k] = Boolean(b.voice[k]);
+      store.setSetting('voice', v);
+    }
+    if (b.voices) {
+      const v = {};
+      for (const k of Object.keys(GIRLS)) if (b.voices[k]) v[k] = String(b.voices[k]).trim().slice(0, 80);
+      store.setSetting('voices', v);
+    }
+    hub.send({ type: 'refresh' });
+    return parentState();
+  });
+
+  // A new key retires the old link and every device that opened it.
+  on('POST', '/api/parent/kid-link', 'parent', () => {
+    auth.rotateKidKey();
+    return parentState();
+  });
+
+  on('POST', '/api/parent/test-reminder', 'parent', () => {
+    const { kidName } = family.profile();
+    hub.send({ type: 'reminder', task: { title: '测试' }, line: `${kidName}，这是妈妈发来的测试提醒。` });
+    return { ok: true, tablets: hub.size };
+  });
+
+  // Sends a test push to Mom's phone, so she knows it reaches her.
+  on('POST', '/api/parent/test-push', 'parent', () => need(notify, '手机推送').test());
+
+  // ---- state builders --------------------------------------------------------
+
+  function kidState() {
+    const s = family.snapshot();
+    const hidden = store.getSetting('hidden');
+    return {
+      now: s.now,
+      dateZh: dateZh(s.now.date),
+      today: s.today,
+      tomorrow: { ...s.tomorrow, dateZh: dateZh(s.tomorrow.date) },
+      tasks: s.tasks.map(({ id, title, icon, time, minutes, status, started_at: started }) => ({ id, title, icon, time, minutes, status, started })),
+      alarms: s.alarms.map(({ id, date, time, label }) => ({ id, date, time, label })),
+      affinity: {
+        ...s.affinity,
+        stageName: STAGE_NAMES[s.profile.pet]?.[s.affinity.stage - 1],
+        stageUp: STAGE_UP[s.profile.pet]?.[s.affinity.stage - 2] || null,
+      },
+      profile: { kidName: s.profile.kidName, girl: s.profile.girl, pet: s.profile.pet, scene: s.profile.scene },
+      // Where she is now (activity.js): the scene follows what MoMo is doing.
+      activity: s.activity ? { id: s.activity.task.id, title: s.activity.task.title, place: s.activity.scene, started: s.activity.started, from: s.activity.from } : null,
+      scene: sceneOf({ activity: s.activity, quiet: inQuiet(s.now.minutes, store.getSetting('quiet')), free: s.profile.scene, minutes: s.now.minutes }),
+      scenes: Object.fromEntries(Object.entries(SCENES).map(([k, v]) => [k, v.name])),
+      freeScenes: FREE_SCENES,
+      girls: Object.fromEntries(Object.entries(GIRLS).filter(([k]) => !hidden.girls.includes(k)).map(([k, g]) => [k, { name: g.name }])),
+      pets: Object.fromEntries(Object.entries(PETS).filter(([k]) => !hidden.pets.includes(k)).map(([k, p]) => [k, { name: p.name, kind: p.kind, sound: p.sound, moves: p.moves }])),
+      tts: Boolean(config.ttsAppId),
+      quiet: inQuiet(s.now.minutes, store.getSetting('quiet')),
+      looked: lookedToday(s.now.date), // MoMo sees how often Mom looked in through the camera
+      files: store.kidFileCount(store.getSetting('kidFilesSeen')), // { n, fresh }: her files, and the new ones from Mom
+      voice: store.getSetting('voice'),
+      // 语音唤醒: the name the tablet listens for (the companion who talks), unless Mom turned it off
+      wake: store.getSetting('voice').wake && GIRLS[s.profile.girl] ? { name: GIRLS[s.profile.girl].name, tokens: GIRLS[s.profile.girl].wake.tokens } : null,
+    };
+  }
+
+  // A file the page asking may look at: MoMo's page, hers and the ones Mom shared;
+  // Mom's, any.
+  function viewable(ctx, id) {
+    if (ctx.kid) return kidFile(id);
+    const f = store.getFile(Number(id));
+    if (!f) throw new HttpError(404, '这个文件已经删除了');
+    return f;
+  }
+
+  // Page n of a file, drawn: { path, type, n }.
+  async function pageOf(f, n) {
+    const shown = await need(pages, '页面').count(f);
+    const k = Math.round(Number(n) || 1);
+    if (!shown || k < 1 || k > shown.n) throw new HttpError(404, '没有这一页');
+    return { ...(await pages.page(f, k)), n: k };
+  }
+
+  // What to call a file: the title she read in it, else its name.
+  function titleOf(f) {
+    const r = f.result || {};
+    if (r.doc && r.doc.title) return r.doc.title;
+    if (r.kind === 'homework_page' && r.page) return `${r.page.subject || ''}作业`;
+    return (f.name || '').replace(/\.[a-z0-9]{1,8}$/i, '') || (f.kind === 'photo' ? '照片' : '文件');
+  }
+
+  // A homework page's problems with their places on it: [{ n, box }].
+  function problemsOf(f) {
+    const page = f.result && f.result.kind === 'homework_page' && f.result.page;
+    return page ? page.problems.filter((p) => p.box).map((p) => ({ n: p.n, box: p.box })) : [];
+  }
+
+  // The problem a line is about ("第三题", "第3题"), if the page has it.
+  function problemIn(f, text) {
+    const m = /第\s*([0-9]+|[一二两三四五六七八九十]+)\s*[道个]?(?:小)?题/.exec(text);
+    if (!m) return null;
+    const n = numberOf(m[1]);
+    return problemsOf(f).find((p) => numberOf(p.n) === n) || null;
+  }
+
+  // A file MoMo may see: hers, or one Mom shared with her.
+  function kidFile(id) {
+    const f = store.getFile(Number(id));
+    if (!f || !(f.who === 'kid' || (f.who === 'mom' && f.shared))) throw new HttpError(404, '没有这个文件');
+    return f;
+  }
+
+  // A stored file, a piece at a time (or the byte range asked for: a video being played).
+  // Shown in the page only if it is a picture, music, a video, a PDF or plain text; any
+  // other kind (a web page, say) is saved, never opened as one of this site's pages.
+  function fileResponse(ctx, f) {
+    if (!f || !existsSync(need(files, '文件').pathOf(f))) throw new HttpError(404, '这个文件已经删除了');
+    const ext = MIME_EXT[f.mime] || (/\.([a-z0-9]{1,8})$/i.exec(f.name) || [])[1] || 'bin';
+    const name = f.name || `文件${f.id}.${ext}`;
+    const range = byteRange(ctx.req.headers.range, f.bytes);
+    if (range === false) return { status: 416, type: 'text/plain', body: Buffer.alloc(0), headers: { 'Content-Range': `bytes */${f.bytes}` } };
+    const headers = { 'Content-Length': range ? range.end - range.start + 1 : f.bytes, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' };
+    if (range) headers['Content-Range'] = `bytes ${range.start}-${range.end}/${f.bytes}`;
+    if (ctx.url.searchParams.get('download') || !INLINE.test(f.mime)) headers['Content-Disposition'] = `attachment; filename="file.${ext}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+    return { status: range ? 206 : 200, type: f.mime, headers, stream: files.stream(f, range) };
+  }
+
+  // A file as Mom's page shows it.
+  function fileCard(f) {
+    const r = f.result || {};
+    const type = r.type || '';
+    const doc = r.doc ? { ...r.doc, dates: r.doc.dates.map((x) => ({ ...x, dateZh: dateZh(x.date) })) } : null;
+    return {
+      id: f.id, at: f.at, who: f.who, name: f.name, kind: f.kind, mime: f.mime, bytes: f.bytes, status: f.status, shared: f.who === 'kid' || Boolean(f.shared),
+      type, typeZh: TYPE_ZH[type] || (f.kind === 'photo' ? '照片' : ''), size: r.parts > 1 && PART_ZH[type] ? `${r.parts} ${PART_ZH[type]}` : '',
+      read: r.kind || null, summary: r.summary || '', doc, cut: Boolean(r.cut || r.partial),
+    };
+  }
+
+  function lookedToday(date) {
+    const { n, last } = store.eventCount(date, 'check', { withFile: true });
+    return n ? { n, last: nowIn(family.timeZone, new Date(last)).time } : null;
+  }
+
+  function parentState() {
+    const now = family.now();
+    const cfg = store.cycleConfig();
+    const days = [];
+    for (let i = 0; i < 14; i += 1) {
+      const d = family.day(addDays(now.date, i));
+      days.push({ date: d.date, dateZh: dateZh(d.date), label: d.label, override: cfg.overrides[d.date] ?? null });
+    }
+    return {
+      now,
+      cycle: store.getSetting('cycle'),
+      courses: store.getCourses(),
+      overrides: store.listOverrides(),
+      days,
+      templates: store.listTemplates(),
+      places: Object.fromEntries(Object.entries(SCENES).filter(([, v]) => !v.free).map(([k, v]) => [k, v.name])), // where a task can happen
+      today: family.tasks(now.date),
+      waiting: store.listWaiting(),
+      affinity: family.affinity(),
+      stages: STAGES,
+      ledger: store.affinityLedger(30),
+      profile: store.getSetting('profile'),
+      hidden: store.getSetting('hidden'),
+      quiet: store.getSetting('quiet'),
+      voice: store.getSetting('voice'),
+      voices: Object.fromEntries(Object.entries(GIRLS).map(([k, g]) => [k, (store.getSetting('voices') || {})[k] || g.voice])),
+      girls: Object.fromEntries(Object.entries(GIRLS).map(([k, g]) => [k, { name: g.name }])),
+      pets: Object.fromEntries(Object.entries(PETS).map(([k, p]) => [k, { name: p.name, kind: p.kind }])),
+      kidKey: auth.kidKey(),
+      tablets: hub.size,
+      usage: { chat: store.usage(now.date, 'chat'), asr: store.usage(now.date, 'asr'), tts: store.usage(now.date, 'tts'), vision: store.usage(now.date, 'vision'), momchat: store.usage(now.date, 'momchat'), notify: store.usage(now.date, 'notify'), limits: config.limits },
+      tts: Boolean(config.ttsAppId),
+      push: notify && notify.on ? notify.target.name : null, // the service Mom's phone hears from
+    };
+  }
+
+  // ---- dispatch ----------------------------------------------------------------
+
+  function match(method, pathname) {
+    for (const r of routes) {
+      if (r.method !== method) continue;
+      const a = r.path.split('/');
+      const b = pathname.split('/');
+      if (a.length !== b.length) continue;
+      const params = {};
+      if (a.every((seg, i) => (seg.startsWith(':') ? ((params[seg.slice(1)] = decodeURIComponent(b[i])), true) : seg === b[i]))) {
+        return { route: r, params };
+      }
+    }
+    return null;
+  }
+
+  async function serveStatic(req, res, pathname) {
+    const rel = PAGES[pathname] || pathname.replace(/^\/+/, '');
+    const file = normalize(join(webDir, rel));
+    if (!file.startsWith(webDir + sep) || rel.includes('..')) return false;
+    let st;
+    try {
+      st = await stat(file);
+    } catch {
+      return false;
+    }
+    if (!st.isFile()) return false;
+    const type = TYPES[extname(file)] || 'application/octet-stream';
+    const headers = { 'Content-Type': type, 'Accept-Ranges': 'bytes' };
+    if (type.startsWith('text/html')) {
+      headers['Content-Security-Policy'] = CSP;
+      headers['Cache-Control'] = 'no-cache';
+    } else {
+      headers['Cache-Control'] = /^(img|vid|kws)\//.test(rel) ? 'public, max-age=604800' : 'no-cache'; // (kws: the wake word listener, 10 MB to download)
+    }
+    // Safari won't play a video unless it can fetch byte ranges of it.
+    const range = byteRange(req.headers.range, st.size);
+    if (range === false) {
+      res.writeHead(416, { 'Content-Range': `bytes */${st.size}` });
+      res.end();
+      return true;
+    }
+    const { start, end } = range || { start: 0, end: st.size - 1 };
+    if (range) headers['Content-Range'] = `bytes ${start}-${end}/${st.size}`;
+    headers['Content-Length'] = end - start + 1;
+    res.writeHead(range ? 206 : 200, headers);
+    if (!st.size) {
+      res.end();
+      return true;
+    }
+    pipeline(createReadStream(file, { start, end }), res, () => {});
+    return true;
+  }
+
+  return async function handle(req, res) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Frame-Options', 'DENY');
+    const url = new URL(req.url, 'http://local');
+    const pathname = url.pathname.replace(/\/+$/, '') || '/';
+    const cookies = parseCookies(req.headers.cookie);
+    const secure = req.headers['x-forwarded-proto'] === 'https' || config.publicUrl.startsWith('https://');
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    const pending = [];
+
+    try {
+      // The kid link: a valid key becomes a cookie, then the key leaves the address bar.
+      if (req.method === 'GET' && pathname === '/' && url.searchParams.has('k')) {
+        const headers = { Location: '/', 'Cache-Control': 'no-store' };
+        if (auth.keyMatches(url.searchParams.get('k'))) {
+          headers['Set-Cookie'] = cookie(KID_COOKIE, auth.kidCookieValue(), { maxAge: KID_TTL_S, secure });
+        }
+        res.writeHead(302, headers);
+        res.end();
+        return;
+      }
+      const m = match(req.method, pathname);
+      if (!m) {
+        if (req.method === 'GET' && (await serveStatic(req, res, pathname))) return;
+        throw new HttpError(404, '没有这个页面');
+      }
+      const ctx = { req, res, url, params: m.params, cookies, secure, ip, body: {}, setCookie: (c) => pending.push(c) };
+      if (m.route.access === 'parent' && !auth.isParent(cookies)) throw new HttpError(401, '请先登录家长后台');
+      if (m.route.access === 'kid') {
+        ctx.kid = auth.isKid(cookies);
+        if (!ctx.kid && !auth.isParent(cookies)) throw new HttpError(401, '这个链接已经失效，请向妈妈要新的链接');
+      }
+      if (req.method === 'POST') {
+        const o = m.route.opts;
+        if (!o.stream) ctx.body = o.raw ? await readRaw(req, o.raw) : await readJson(req, o.limit || (pathname === '/api/asr' ? 2_000_000 : 64_000));
+      }
+
+      const out = await m.route.fn(ctx);
+      if (out === undefined) return; // streaming response (SSE)
+      if (pending.length) res.setHeader('Set-Cookie', pending);
+      if (out && out.stream) {
+        res.writeHead(out.status, { 'Content-Type': out.type, 'Cache-Control': 'no-store', ...out.headers });
+        for await (const piece of out.stream) {
+          if (res.destroyed) break; // the tablet stopped listening
+          if (!res.write(piece)) await drained(res); // a big file to a slow tablet isn't held in memory
+        }
+        res.end();
+        return;
+      }
+      if (out && out.status && (out.body || out.status === 204)) {
+        res.writeHead(out.status, out.body ? { 'Content-Type': out.type, 'Content-Length': out.body.length, 'Cache-Control': out.private ? 'private, max-age=3600' : 'no-store', ...out.headers } : {});
+        res.end(out.body);
+        return;
+      }
+      sendJson(res, 200, out);
+    } catch (err) {
+      const status = err.status || 500;
+      if (status >= 500) console.error('[http]', req.method, pathname, err);
+      if (res.headersSent) res.destroy(); // a stream broke off midway
+      else sendJson(res, status, { error: status >= 500 && !err.status ? '服务器出错了，请稍后再试' : err.message });
+    }
+  };
+}
+
+// The part of a file a Range header asks for ({ start, end }, inclusive): null for the
+// whole of it, false for a part it doesn't have (416).
+function byteRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header || '');
+  if (!m || !(m[1] || m[2]) || !size) return null;
+  const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+  const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  return start <= end && { start, end };
+}
+
+// Resolves when the response can take more (or is gone).
+function drained(res) {
+  return new Promise((go) => {
+    const done = () => {
+      res.off('drain', done);
+      res.off('close', done);
+      go();
+    };
+    res.on('drain', done);
+    res.on('close', done);
+  });
+}
+
+function sendJson(res, status, obj) {
+  const body = Buffer.from(JSON.stringify(obj));
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
+  res.end(body);
+}
+
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new HttpError(413, '文件太大了'));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function readJson(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new HttpError(413, '内容太大'));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => {
+      if (!chunks.length) return resolve({});
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        reject(new HttpError(400, '请求格式不对'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+// 3, "3", "(3)", "三", "十二": a problem's number.
+function numberOf(v) {
+  const s = String(v);
+  const d = /[0-9]+/.exec(s);
+  if (d) return Number(d[0]);
+  const DIGIT = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  const m = /([一二两三四五六七八九])?(十)?([一二三四五六七八九])?/.exec(s);
+  if (!m || !m[0]) return null;
+  if (!m[2]) return DIGIT[m[1]] || null;
+  return (m[1] ? DIGIT[m[1]] : 1) * 10 + (m[3] ? DIGIT[m[3]] : 0);
+}

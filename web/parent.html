@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#94b8c7">
+<title>MoMo 的伙伴 · 妈妈</title>
+<link rel="stylesheet" href="/kid.css">
+<link rel="stylesheet" href="/mom.css">
+<link rel="stylesheet" href="/admin.css">
+<script type="module" src="/mom.js"></script>
+</head>
+<body data-girl="b" class="mom">
+
+<div id="login" class="cover" hidden>
+  <form id="loginForm" class="cover-card glass">
+    <h1>妈妈，欢迎回来</h1>
+    <p>输入家长密码，看看沫沫今天怎么样。</p>
+    <input id="password" type="password" autocomplete="current-password" required placeholder="家长密码" aria-label="家长密码">
+    <button type="submit" class="go">进入</button>
+    <p id="loginMsg" class="msg" role="status"></p>
+  </form>
+</div>
+
+<div id="start" class="cover" hidden>
+  <button id="startBtn" class="start-btn" type="button">
+    <img id="startImg" alt="">
+    <span>点一下，叫醒伙伴</span>
+  </button>
+</div>
+
+<main id="app" hidden>
+  <div id="scene" class="scene" aria-hidden="true"><img alt=""><img alt=""></div>
+  <div class="stage" id="stage">
+    <div class="ground" aria-hidden="true"></div>
+    <figure class="girl" id="girlFig">
+      <div class="frame">
+        <img class="base" id="girlImg" alt="">
+        <canvas class="live" aria-hidden="true"></canvas>
+        <img class="pose" alt="" aria-hidden="true">
+      </div>
+      <div class="hit"></div>
+    </figure>
+    <figure class="pet" id="petFig">
+      <div class="shadow" aria-hidden="true"></div>
+      <div class="body"><div class="sprite"><img id="petImg" alt=""></div><canvas class="walk" aria-hidden="true"></canvas></div>
+      <figcaption id="petSay" class="glass" hidden></figcaption>
+    </figure>
+  </div>
+  <div class="night" aria-hidden="true"></div>
+
+  <header class="bar">
+    <div class="when"><b id="date" class="glass"></b><span id="dlabel" class="tag"></span></div>
+    <div id="next" class="next glass"></div>
+  </header>
+
+  <section id="bubble" class="bubble" aria-live="polite" hidden>
+    <div class="frost"></div>
+    <svg class="shape" aria-hidden="true"><path></path></svg>
+    <p id="say"></p>
+    <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+  </section>
+
+  <!-- The rail: what Mom can open beside the companion, one at a time on the right
+       (below her, on a phone). The day's record is there to begin with. -->
+  <nav class="rail" aria-label="功能">
+    <button class="ghost glass round" type="button" data-panel="feed" aria-label="今天的动态" title="今天的动态"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="tasks" aria-label="今天的任务" title="今天的任务"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5h10.5M9.5 12h10.5M9.5 17.5h10.5"/><path d="M3.5 6.6l1.4 1.4 2.4-2.8M3.5 12.1l1.4 1.4 2.4-2.8M3.5 17.6l1.4 1.4 2.4-2.8"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="chat" aria-label="刚才说的" title="刚才说的"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-4.5 3.5v-3.5H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="look" aria-label="看看沫沫" title="看看沫沫"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="files" aria-label="文件" title="文件"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.6C10.2 5.1 7.6 4.6 4 4.9v13.4c3.6-.3 6.2.2 8 1.7 1.8-1.5 4.4-2 8-1.7V4.9c-3.6-.3-6.2.2-8 1.7z"/><path d="M12 6.6v13.4"/></svg></button>
+    <button id="adminBtn" class="ghost glass round" type="button" aria-label="管理" title="管理"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button>
+  </nav>
+
+  <aside class="side" id="side">
+    <section id="panel-feed" class="panel glass">
+      <div class="panel-top"><h2>今天的动态</h2></div>
+      <ul id="feed" class="feed"></ul>
+    </section>
+    <section id="panel-tasks" class="panel glass" hidden>
+      <div class="panel-top"><h2>今天的任务</h2></div>
+      <ul id="tasks" class="tasks mom-tasks"></ul>
+    </section>
+    <section id="panel-chat" class="panel glass" hidden>
+      <div class="panel-top"><h2>刚才说的</h2></div>
+      <p id="chatNone" class="hint-line">还没有说话。按「按一下说话」或者打字问问伙伴。</p>
+      <ul id="chat" class="chat" aria-live="polite"></ul>
+    </section>
+    <section id="panel-look" class="panel glass" hidden>
+      <div class="panel-top"><h2 id="lookTitle">看看沫沫</h2></div>
+      <div class="quick">
+        <button type="button" data-check="look">👀 在做什么</button>
+        <button type="button" data-check="piano">🎹 在练琴吗</button>
+        <button type="button" data-check="posture">✍️ 看看坐姿</button>
+        <button type="button" id="tellBtn">💬 带句话</button>
+      </div>
+    </section>
+
+    <!-- 文件: everything sent to the companion, found by name or what is in it; one
+         opens here, to look at, point at, and keep or share. -->
+    <section id="panel-files" class="panel glass files" hidden>
+      <div id="fileLib">
+        <div class="panel-top"><h2>文件</h2></div>
+        <form id="fileFind" class="find">
+          <input id="fileQuery" maxlength="60" placeholder="文件名或里面的内容，比如：运动会" aria-label="找文件">
+          <button type="submit">搜索</button>
+        </form>
+        <p id="fileStats" class="hint-line"></p>
+        <ul id="fileList" class="lib"></ul>
+        <button id="fileMore" type="button" class="ghost" hidden>再看更早的</button>
+        <p class="hint-line">发给伙伴的照片和文件都存在自己的服务器上，不会自动删除。妈妈发的沫沫也能在她的图书馆里看到；看起来是妈妈自己的（工作文件、账单、合同、病历这类）只给妈妈，每个文件都可以改。</p>
+      </div>
+      <div id="fileView" class="viewer" hidden>
+        <div class="panel-top">
+          <button id="fileBack" class="x" type="button" aria-label="回到文件"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
+          <h2 id="docTitle"></h2>
+          <button id="paperZoom" class="x" type="button" aria-label="放大" aria-pressed="false" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M10.5 7.8v5.4M7.8 10.5h5.4"/></svg></button>
+        </div>
+        <p id="docMeta" class="file-meta"></p>
+        <div id="paperBox" class="paper-box" hidden>
+          <div id="paper" class="paper"><img id="paperImg" alt=""><div id="marks" class="marks"></div></div>
+        </div>
+        <div id="pager" class="pager" hidden>
+          <button id="pagePrev" class="ghost" type="button">上一页</button>
+          <span id="pageNo"></span>
+          <button id="pageNext" class="ghost" type="button">下一页</button>
+        </div>
+        <p id="pointHint" class="point-hint" hidden></p>
+        <p id="docGist" class="file-gist"></p>
+        <div id="docMore" class="file-more"></div>
+        <label id="docShareRow" class="share"><input id="docShare" type="checkbox"> 给沫沫看（她的图书馆里能看到，也能问伙伴）</label>
+        <div class="row">
+          <a id="docSave" class="ghost" href="#" download>保存原文件</a>
+          <button id="docAsk" class="ghost" type="button">问问伙伴</button>
+          <button id="docReread" class="ghost" type="button" hidden>再读一次</button>
+          <button id="docDelete" class="ghost" type="button">删除</button>
+        </div>
+      </div>
+    </section>
+  </aside>
+
+  <div class="dock">
+    <p id="heard" class="heard glass" hidden></p>
+    <form id="typeForm" class="type glass" hidden>
+      <input id="typeText" maxlength="200" placeholder="问问伙伴，比如：沫沫今天作业写完了吗？" autocomplete="off">
+      <button type="submit">发送</button>
+    </form>
+    <div class="talk">
+      <button id="mic" class="mic" type="button">按一下说话</button>
+      <button id="photoBtn" class="ghost glass round" type="button" aria-label="发照片或文件：课程表、作业、通知、成绩单、课件" title="发照片或文件"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4.5M7 9.5l5-5 5 5M4.5 14.5v3a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5v-3"/></svg></button>
+      <button id="kbd" class="ghost glass round" type="button" aria-label="打字" title="打字"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12.5" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M6.5 14.5h.01M17.5 14.5h.01M9.5 14.5h5"/></svg></button>
+      <input id="photoInput" type="file" hidden>
+    </div>
+  </div>
+</main>
+
+<div id="photo" class="sheet" hidden>
+  <div class="sheet-card wide photo-card" role="dialog" aria-label="照片">
+    <img id="photoImg" alt="">
+    <p id="photoText"></p>
+    <button id="photoClose" class="ghost" type="button">关闭</button>
+  </div>
+</div>
+
+<div id="tell" class="sheet" hidden>
+  <form id="tellForm" class="sheet-card" role="dialog" aria-label="给沫沫带句话">
+    <h2 id="tellTitle">想让伙伴告诉沫沫什么？</h2>
+    <textarea id="tellText" maxlength="120" rows="3" placeholder="比如：晚饭前把钢琴练了，妈妈七点到家"></textarea>
+    <div class="row">
+      <button type="submit">请伙伴转告</button>
+      <button id="tellCancel" class="ghost" type="button">算了</button>
+    </div>
+  </form>
+</div>
+
+<div id="admin" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-label="管理">
+    <div class="admin-top">
+      <h2>管理</h2>
+      <div class="row">
+        <button id="logout" class="link" type="button">退出登录</button>
+        <button id="adminClose" type="button">完成</button>
+      </div>
+    </div>
+    <nav id="tabs" class="tabs">
+      <button type="button" data-tab="timetable" aria-selected="true">课表</button>
+      <button type="button" data-tab="tasks">每天的任务</button>
+      <button type="button" data-tab="companion">伙伴</button>
+      <button type="button" data-tab="tablet">平板</button>
+      <button type="button" data-tab="today">好感度和用量</button>
+    </nav>
+
+    <section id="tab-timetable" class="tab">
+      <form id="cycleForm" class="card">
+        <h2>D1–D6 轮换</h2>
+        <p class="hint">告诉我一个确定的日子是 D 几，其余日子我按上学日往前往后推，跳过周末和假期。课程表也可以直接拍照发给伙伴。</p>
+        <div class="row">
+          <label>这一天 <input id="anchorDate" type="date" required></label>
+          <label>是 D <select id="anchorDay"></select></label>
+          <label>一轮几天 <input id="cycleLength" type="number" min="2" max="10" value="6"></label>
+        </div>
+        <fieldset id="weekdays" class="row"><legend>上学的日子</legend></fieldset>
+        <button type="submit">保存轮换</button>
+      </form>
+
+      <div class="card">
+        <h2>接下来 14 天</h2>
+        <p class="hint">学校临时调课或放假，在这里改那一天就行，后面的日子会自动顺延。</p>
+        <ul id="days" class="list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>每天的课</h2>
+        <p class="hint">一行一节课，按顺序写。要带东西就在课名后加冒号，比如「体育：穿运动鞋」。</p>
+        <div id="courses" class="courses"></div>
+        <button id="saveCourses" type="button">保存课表</button>
+        <p id="coursesMsg" class="msg" role="status"></p>
+      </div>
+
+      <form id="holidayForm" class="card">
+        <h2>放长假</h2>
+        <div class="row">
+          <label>从 <input id="holFrom" type="date" required></label>
+          <label>到 <input id="holTo" type="date" required></label>
+          <label>名称 <input id="holNote" value="假期" maxlength="20"></label>
+        </div>
+        <button type="submit">设为假期</button>
+        <ul id="overrides" class="list small"></ul>
+      </form>
+    </section>
+
+    <section id="tab-tasks" class="tab" hidden>
+      <form id="tplForm" class="card">
+        <h2 id="tplTitle">新增每天的任务</h2>
+        <input id="tplId" type="hidden">
+        <div class="row">
+          <label class="icon">图标 <input id="tplIcon" maxlength="4" placeholder="📝"></label>
+          <label class="grow">名称 <input id="tplName" maxlength="20" required placeholder="写作业"></label>
+          <label>时间 <input id="tplTime" type="time"></label>
+          <label>大约几分钟 <input id="tplMinutes" type="number" min="5" max="240" value="30"></label>
+          <label>在哪儿做 <select id="tplScene"></select></label>
+        </div>
+        <div class="row">
+          <label>哪些天
+            <select id="tplDays">
+              <option value="school">上学的日子</option>
+              <option value="offday">不上学的日子</option>
+              <option value="every">每天</option>
+              <option value="custom">自己选星期</option>
+            </select>
+          </label>
+          <fieldset id="tplWeekdays" class="row" hidden><legend>星期</legend></fieldset>
+          <label class="check"><input id="tplActive" type="checkbox" checked> 启用</label>
+        </div>
+        <div class="row">
+          <button type="submit">保存任务</button>
+          <button id="tplCancel" type="button" class="secondary" hidden>取消编辑</button>
+        </div>
+      </form>
+      <div class="card">
+        <h2>所有每天的任务</h2>
+        <p class="hint">只做一次的任务和作业，直接跟伙伴说，或者把作业清单拍照发给她。到了任务的时间（或者沫沫说开始了），画面会换到它的地方：写作业、阅读去书房，练琴去琴房，运动去运动馆或公园，洗漱睡觉回卧室；按任务名自动判断，也可以在「在哪儿做」里指定。</p>
+        <ul id="templates" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-companion" class="tab" hidden>
+      <form id="companionForm" class="card">
+        <h2>伙伴</h2>
+        <div class="row">
+          <label>孩子的名字 <input id="kidName" maxlength="12"></label>
+          <label>说话的伙伴 <select id="curGirl"></select></label>
+          <label>宠物 <select id="curPet"></select></label>
+        </div>
+        <fieldset id="hideGirls" class="row"><legend>不给沫沫选的少女</legend></fieldset>
+        <fieldset id="hidePets" class="row"><legend>不给沫沫选的宠物</legend></fieldset>
+        <div class="row">
+          <label>安静时间 从 <input id="quietStart" type="time"></label>
+          <label>到 <input id="quietEnd" type="time"></label>
+        </div>
+        <p class="hint">安静时间里不发任务提醒、不转告留言（闹钟照常响）。</p>
+        <label class="check"><input id="followUp" type="checkbox"> 连续对话：伙伴回答完会再听几秒，接着说就能继续聊，不用再点「按一下说话」</label>
+        <p class="hint">只在用说话提问之后才接着听；没人说话就停，最多连着听 5 轮；安静时间里平板不会自己听。沫沫的平板和妈妈的页面都一样。</p>
+        <label class="check"><input id="wakeOn" type="checkbox"> 语音唤醒：在沫沫的平板上喊伙伴的名字（比如「云笈」）就能跟她说话，不用点</label>
+        <p class="hint">名字是平板自己听的（开源的 sherpa-onnx 唤醒词模型，在平板上运行），听到名字之前，声音不会离开平板；听到名字以后，这一句才像平时点「按一下说话」一样发去识别，服务器还会核对确实叫了她的名字才回答。平板开着页面时麦克风一直开着，屏幕顶上会显示「👂 喊「云笈」」；安静时间、页面不在前台时不听。第一次打开要下载约 10 MB（之后缓存一周）。</p>
+        <fieldset id="voices" class="col"><legend>配音音色（豆包语音 2.0 的音色 ID）</legend></fieldset>
+        <p id="ttsNote" class="hint"></p>
+        <button type="submit">保存</button>
+        <p id="companionMsg" class="msg" role="status"></p>
+      </form>
+    </section>
+
+    <section id="tab-tablet" class="tab" hidden>
+      <div class="card">
+        <h2>孩子页面的链接</h2>
+        <p class="hint">在平板或手机上打开这个链接就能用，几台设备都行。这个链接就是钥匙，不要发到群里；万一发出去了，点「换一个新链接」，旧链接马上失效。</p>
+        <div class="pair">
+          <input id="kidUrl" readonly aria-label="孩子页面的链接">
+          <button id="kidCopy" type="button" class="secondary">复制</button>
+        </div>
+        <button id="kidRotate" type="button" class="secondary">换一个新链接</button>
+        <p id="kidMsg" class="msg" role="status"></p>
+      </div>
+      <div class="card">
+        <h2>在线情况</h2>
+        <p id="online" class="hint"></p>
+        <button id="testReminder" type="button" class="secondary">发一条测试提醒</button>
+        <p id="testMsg" class="msg" role="status"></p>
+      </div>
+      <div class="card">
+        <h2>手机推送</h2>
+        <p id="pushNote" class="hint"></p>
+        <button id="testPush" type="button" class="secondary" hidden>发一条测试推送</button>
+        <p id="pushMsg" class="msg" role="status"></p>
+      </div>
+      <div class="card">
+        <h2>照片</h2>
+        <p class="hint">发给伙伴的照片和文件一直存在自己的服务器上，直到在「文件」里删除；「看看沫沫」时平板拍的照片 7 天后自动删除。只有登录了家长密码才能看（沫沫的页面只看得到她自己发的和妈妈给她看的）。平板拍照时，屏幕角上会显示摄像头画面，伙伴也会先说一声。</p>
+      </div>
+    </section>
+
+    <section id="tab-today" class="tab" hidden>
+      <div class="card">
+        <h2>好感度</h2>
+        <p id="affinity" class="big"></p>
+        <ul id="ledger" class="list small"></ul>
+      </div>
+      <div class="card">
+        <h2>今天的用量</h2>
+        <p id="usage" class="hint"></p>
+      </div>
+    </section>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,472 @@
+/* Kid page, design A (晕染). The soft colours the companion and the pet were painted on
+   spread over the whole screen: the girl's on her side, the pet's on its side, meeting
+   in a gradient, and the two stand on it cut out. Nothing sits in a box; panels are
+   frosted glass. kid.js sets --gc and --pc from the characters on screen.
+
+   One layout system for every screen. Sizes come from rem, and the root size follows
+   the screen's short side, so a phone, a foldable and a 13-inch tablet keep the same
+   proportions. A rail of round buttons runs down the left; each opens its panel
+   (today's tasks, the library, the pet) beside the companion, and nothing is there
+   otherwise. Four arrangements:
+     phone portrait    one screen: the rail beside the characters, the mic at the
+                       bottom; a panel opens over the lower part, above the mic
+     tablet portrait   the same, the panel narrower on the right
+     landscape         one screen: the rail, the characters, and the panel column
+                       on the right with the mic under it (wider while a file is
+                       being read)
+     short landscape   the same grid, tighter (foldables, phones on their side)
+   Every block lives in its own grid area, so nothing can push another off screen;
+   a long panel scrolls inside itself. The speech bubble floats by the girl's mouth
+   wherever she stands; kid.js places it. */
+:root {
+  --ink: #23262E;
+  --ink-2: #555B68;
+  --glass: rgba(255, 255, 255, 0.56);
+  --glass-strong: rgba(255, 255, 255, 0.82);
+  --glass-line: rgba(255, 255, 255, 0.7);
+  --good: #3E9A63;
+  --wait: #B7791F;
+  --redo: #C2553B;
+  --gc: #94b8c7;
+  --pc: #e2b9cc;
+  --accent: #3A7FA2;
+  --accent-ink: #fff;
+  --font: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: clamp(15px, 0.8vmin + 10.5px, 21px);
+  /* No pull-to-refresh: a swipe down would reload the page and send the companion back to sleep. */
+  overscroll-behavior-y: none;
+}
+body[data-girl="a"] { --accent: #C25A78; }
+body[data-girl="b"] { --accent: #3A7FA2; }
+body[data-girl="c"] { --accent: #A0522D; }
+body[data-girl="d"] { --accent: #6A57BE; }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--gc);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+/* The two colours meet in a fixed gradient, so it never restarts when a phone scrolls. */
+body::before { content: ""; position: fixed; inset: 0; z-index: -1;
+  background: linear-gradient(180deg, var(--gc) 0%, var(--gc) 32%, var(--pc) 60%, var(--pc) 100%); }
+button { font: inherit; color: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
+.glass { background: var(--glass); border: 1px solid var(--glass-line);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 8px 26px rgba(30, 40, 60, 0.1); }
+
+/* covers ------------------------------------------------------------------ */
+.cover { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); }
+.cover-card { max-width: 32rem; border-radius: 1.4rem; padding: 1.6rem 1.8rem; text-align: center; }
+.cover-card h1 { margin: 0 0 0.5rem; font-size: 1.6rem; }
+.cover-card p { margin: 0; color: var(--ink-2); font-size: 1.1rem; line-height: 1.7; }
+.start-btn { border: 0; background: none; display: grid; justify-items: center; gap: 1.1rem; }
+.start-btn img { width: min(64vw, 52vh, 26rem); aspect-ratio: 3 / 4; object-fit: cover; display: block;
+  -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 48%, #000 62%, transparent 100%);
+  mask-image: radial-gradient(ellipse 50% 50% at 50% 48%, #000 62%, transparent 100%); }
+.start-btn span { font-size: 1.5rem; font-weight: 700; color: var(--accent-ink); background: var(--accent);
+  padding: 0.8rem 2rem; border-radius: 999px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18); }
+
+/* characters ----------------------------------------------------------------
+   Both stand on one stage, cut out of their pictures. The girl is in the middle, full
+   length, feet on the floor line; companion.js plays her looping videos on a canvas
+   (quiet, or talking while her voice plays) and puts a whole pose over her for moods.
+   The pet is smaller and companion.js walks it around her on an oval of floor: in
+   front of her, beside her, or behind her, with its walking loop while it moves. */
+.stage { position: relative; z-index: 1; min-width: 0; min-height: 0; container-type: size;
+  --floor: 8%; /* room under her feet for the pet to pass in front */
+  --girl-h: 88%; }
+.ground { position: absolute; left: 50%; bottom: calc(var(--floor) - 1.2%); width: 26%; height: 5%; translate: -50% 0;
+  border-radius: 50%; background: radial-gradient(closest-side, rgba(40, 30, 70, 0.22), rgba(40, 30, 70, 0)); pointer-events: none; }
+.girl { position: absolute; z-index: 2; left: 50%; bottom: var(--floor); height: var(--girl-h); aspect-ratio: 3 / 4;
+  translate: -50% 0; margin: 0; pointer-events: none; }
+/* Never wider than her stage (a tall narrow one: a phone, beside the rail). */
+@supports (width: 1cqw) { .girl { height: min(var(--girl-h), 125cqw); } }
+.girl .frame { position: absolute; inset: 0; transform-origin: 50% 97%;
+  animation: breathe 4.2s ease-in-out infinite, var(--feel, none), var(--poke, none); }
+.girl.alive .frame { animation: var(--feel, none), var(--poke, none); } /* her loops breathe for her */
+.girl img, .pet img { position: absolute; display: block; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  -webkit-user-drag: none; pointer-events: none; }
+.girl .base, .girl .pose, .girl .live { inset: 0; width: 100%; height: 100%; }
+.girl .live { position: absolute; display: block; opacity: 0; transition: opacity 0.2s ease; }
+.girl.alive .live { opacity: 1; }
+.girl.alive .base { opacity: 0; transition: opacity 0.2s ease 0.15s; } /* the still goes once a frame is up */
+.girl .pose { opacity: 0; transition: opacity 0.16s ease; }
+.girl.posed .pose { opacity: 1; }
+.girl.posed .base, .girl.posed .live { opacity: 0; transition: opacity 0.16s ease; }
+.girl .hit { position: absolute; pointer-events: auto; cursor: pointer; } /* her outline, placed by companion.js */
+
+.pet { position: absolute; left: 0; top: 0; z-index: 3; margin: 0; width: 6rem; height: 8rem; transform-origin: 50% 100%;
+  cursor: pointer; will-change: transform; }
+.pet .shadow { position: absolute; left: 12%; right: 12%; bottom: -4%; height: 10%; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(40, 30, 70, 0.26), rgba(40, 30, 70, 0)); }
+.pet .body { position: absolute; inset: 0; transform-origin: 50% 100%; }
+.pet .sprite { position: absolute; inset: 0; transform-origin: 50% 100%; }
+.pet .sprite img { inset: 0; width: 100%; height: 100%; transition: opacity 0.15s ease; }
+/* Its walking loop, placed by companion.js so its feet are on the pet's floor point. */
+.pet .walk { position: absolute; display: block; left: 0; bottom: 0; width: 0; height: 0; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
+.pet.walking .walk { opacity: 1; }
+.pet.walking .sprite img { opacity: 0; }
+/* What the pet is doing, just above its head and never much wider than it. */
+.pet figcaption { position: absolute; left: 50%; bottom: 96%; z-index: 2; translate: -50% 0;
+  width: max-content; max-width: 220%; text-align: center;
+  border-radius: 0.9rem; padding: 0.3rem 0.75rem; font-size: 0.95rem; background: var(--glass-strong); }
+.pet.east figcaption { left: auto; right: 0; translate: 0 0; } /* near the stage's right edge: hangs leftward */
+.pet.west figcaption { left: 0; translate: 0 0; }
+
+/* The pet's moods, on its sprite (kid.js owns where it stands and its hops). */
+.pet .sprite.jump { animation: pet-jump 0.62s cubic-bezier(0.3, 0.9, 0.4, 1) 2; }
+.pet .sprite.listen { animation: pet-listen 0.9s ease-in-out infinite; }
+.pet .sprite.tilt { animation: pet-tilt 1.6s ease-in-out infinite; }
+.pet .sprite.peek { animation: pet-peek 1.8s ease-in-out both; } /* leans out from behind her, and back */
+.pet .sprite.evolve { animation: evolve 1.4s ease-in-out 3; }
+.pet .sprite.evolve::before { content: ""; position: absolute; inset: -18%; border-radius: 50%; z-index: -1;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 64%); animation: shine 1.4s ease-in-out 3; }
+@keyframes pet-jump { 0%, 100% { translate: 0 0; scale: 1; } 15% { scale: 1.08 0.9; } 45% { translate: 0 -38%; scale: 0.95 1.06; } 75% { translate: 0 0; scale: 1.06 0.94; } }
+@keyframes pet-listen { 0%, 100% { scale: 1; } 50% { scale: 1.02 0.98; } }
+@keyframes pet-tilt { 0%, 100% { rotate: 0deg; } 30% { rotate: -9deg; } 70% { rotate: 7deg; } }
+@keyframes pet-peek { 0%, 100% { rotate: 0deg; translate: 0 0; } 20%, 80% { rotate: 14deg; translate: 10% 0; } 50% { rotate: 10deg; translate: 10% -2%; } }
+@keyframes breathe { 0%, 100% { scale: 1; } 50% { scale: 1.006 1.012; } }
+@keyframes evolve { 0%, 100% { filter: none; scale: 1; } 50% { filter: brightness(1.3) saturate(1.2); scale: 1.08; } }
+@keyframes shine { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+
+/* While she talks, the line's mood moves her; a tap bounces her. They use transform
+   properties other than breathing's, so all can run at once. */
+.girl[data-feel="cheer"] { --feel: feel-cheer 0.8s ease-in-out infinite; }
+.girl[data-feel="happy"] { --feel: feel-happy 1.8s ease-in-out infinite; }
+.girl[data-feel="worried"] { --feel: feel-worried 2.4s ease-in-out infinite; }
+.girl.poked { --poke: poke 0.55s ease-out; }
+@keyframes feel-cheer { 0%, 100% { translate: 0 0; } 50% { translate: 0 -2.2%; } }
+@keyframes feel-happy { 0%, 100% { rotate: 0deg; } 25% { rotate: -1.3deg; } 75% { rotate: 1.3deg; } }
+@keyframes feel-worried { 0%, 100% { rotate: 0deg; translate: 0 0; } 50% { rotate: -1.6deg; translate: 0 0.8%; } }
+@keyframes poke { 0% { scale: 1; } 25% { scale: 1.04 0.96; } 55% { scale: 0.985 1.03; } 100% { scale: 1; } }
+
+/* The place she is in (activity.js): a picture behind it all, in two layers that
+   cross-fade when she moves. Held sideways, a tablet shows it whole behind the page;
+   held upright, and on a phone, it fills the top of the page behind the characters and
+   fades into the page colour below them. --focus: what to keep when only a slice fits. */
+.scene { position: relative; grid-row: 1 / 3; grid-column: 1 / -1; pointer-events: none;
+  margin: calc(-1 * var(--pad-t)) calc(-1 * var(--pad-r)) 0 calc(-1 * var(--pad-l));
+  -webkit-mask-image: linear-gradient(180deg, #000 82%, transparent); mask-image: linear-gradient(180deg, #000 82%, transparent); }
+.scene img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: var(--focus, 50%) 70%;
+  opacity: 0; transition: opacity 1.2s ease; }
+.scene img.on { opacity: 1; }
+@media (orientation: landscape) and (min-width: 600px) {
+  .scene { position: fixed; inset: 0; margin: 0; -webkit-mask-image: none; mask-image: none; }
+  .scene img { object-position: 50% 100%; }
+}
+
+/* Quiet hours: the whole picture dims and stars come out above the characters. */
+.night { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.8s ease;
+  background: linear-gradient(180deg, rgba(20, 26, 62, 0.52), rgba(12, 16, 42, 0.62)); }
+.night::before { content: ""; position: absolute; inset: 0;
+  background: radial-gradient(circle, #fff 0 1.4px, transparent 2px) 0 0 / 97px 83px,
+    radial-gradient(circle, rgba(255, 255, 255, 0.75) 0 1px, transparent 1.6px) 41px 29px / 131px 109px;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 46%); mask-image: linear-gradient(180deg, #000, transparent 46%); }
+body.quiet-time .night { opacity: 1; }
+
+/* blocks -------------------------------------------------------------------- */
+.bar, .side { position: relative; z-index: 2; min-width: 0; }
+/* The date and the next task share one line; the next task gives way (with an ellipsis)
+   before it would wrap, and only an alarm goes to a second line on a narrow phone. */
+.bar { display: flex; align-items: center; gap: 0.5rem 0.6rem; flex-wrap: wrap; font-size: 1rem; }
+.when { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+.when b { font-size: 1.1rem; padding: 0.35rem 0.9rem; border-radius: 999px; white-space: nowrap; }
+.tag { display: inline-block; padding: 0.2rem 0.75rem; border-radius: 999px; font-weight: 700; background: var(--accent); color: var(--accent-ink); white-space: nowrap; }
+.tag.alarm { color: var(--ink); font-weight: 500; flex: none; }
+.next { padding: 0.35rem 0.9rem; border-radius: 999px; color: var(--ink-2); flex: 1 1 0; min-width: 6.5em; max-width: max-content;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.next:empty { display: none; }
+.ghost { border: 1px solid var(--glass-line); background: var(--glass); border-radius: 999px; padding: 0.5rem 1rem; }
+.ghost.small { padding: 0.2rem 0.75rem; font-size: 0.9rem; background: rgba(255, 255, 255, 0.7); }
+.ghost.round { width: 3.6rem; height: 3.6rem; padding: 0; font-size: 1rem; flex: none; display: grid; place-items: center; }
+/* the round buttons' pictures (send a file, her files, type): drawn lines, the same on every phone */
+.ico { width: 1.65rem; height: 1.65rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The speech bubble: an oval of frosted glass beside her mouth, its tail pointing at
+   it. kid.js sizes and places it for whichever girl is talking, on every screen;
+   while she thinks it shrinks to three dots with little puffs for a tail. */
+.bubble { position: absolute; z-index: 4; left: 0; top: 0; margin: 0; pointer-events: none; transition: opacity 0.25s ease; }
+.bubble .frost { position: absolute; inset: 0; border-radius: 50%;
+  -webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15); }
+.bubble .shape { position: absolute; left: 0; top: 0; overflow: visible; filter: drop-shadow(0 8px 18px rgba(30, 40, 60, 0.14)); }
+.bubble .shape path { fill: rgba(255, 255, 255, 0.62); stroke: rgba(255, 255, 255, 0.95); stroke-width: 1.5; stroke-linejoin: round; }
+.bubble p { position: absolute; left: 50%; top: 50%; margin: 0; transform: translate(-50%, -50%); width: max-content;
+  font-size: 1.3rem; line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
+.bubble .dots { display: none; }
+.bubble.think p { display: none; }
+.bubble.think .dots { display: flex; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); gap: 0.45rem; }
+.dots i { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--accent); opacity: 0.35; animation: dot 1.1s ease-in-out infinite; }
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.35; } 30% { transform: translateY(-0.35rem); opacity: 1; } }
+.bubble.pop { animation: pop 0.32s cubic-bezier(0.3, 1.4, 0.5, 1); }
+@keyframes pop { from { transform: scale(0.82); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
+.bubble.dim { opacity: 0.35; }
+.bubble.gone { opacity: 0; transition-duration: 0.45s; } /* fades a few seconds after she stops */
+
+/* What MoMo just said, by the mic. */
+.heard { margin: 0; justify-self: end; max-width: 100%; padding: 0.4rem 0.9rem; border-radius: 1.1rem 1.1rem 0.35rem 1.1rem;
+  font-size: 1rem; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.side { display: grid; gap: 0.7rem; align-content: start; }
+.panel { border-radius: 1.2rem; padding: 0.75rem 1rem; min-width: 0; }
+.panel h2 { margin: 0 0 0.5rem; font-size: 0.95rem; color: var(--ink-2); font-weight: 600; }
+
+/* The rail: round glass buttons like the mic's neighbours, one per panel. */
+.rail { grid-area: rail; position: relative; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.7rem; }
+.rail button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+/* MoMo's page: the right side is empty until a panel is opened. (Mom's page always has one.) */
+body:not(.mom):not([data-panel]) .side { display: none; }
+.side > .panel { margin: 0; }
+.panel-top { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.5rem; }
+.panel-top h2 { flex: 1 1 auto; margin: 0; min-width: 0; font-size: 1.1rem; color: var(--ink); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.x { flex: none; width: 2.3rem; height: 2.3rem; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, 0.75); color: var(--ink); }
+.x .ico { width: 1.3rem; height: 1.3rem; }
+.x[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.tasks { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.tasks button { width: 100%; display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto; align-items: center; gap: 0.6rem; text-align: left;
+  background: rgba(255, 255, 255, 0.62); border: 1px solid rgba(255, 255, 255, 0.75); border-radius: 0.9rem; padding: 0.55rem 0.75rem; font-size: 1.1rem; }
+.tasks .icon { font-size: 1.4rem; text-align: center; }
+.tasks .title { overflow-wrap: anywhere; }
+.tasks .time { font-size: 0.85rem; color: var(--ink-2); }
+.tasks .st { font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
+.tasks .waiting .st { color: var(--wait); }
+.tasks .confirmed .st { color: var(--good); }
+.tasks .redo .st { color: var(--redo); }
+.tasks .confirmed, .tasks .waiting { opacity: 0.85; }
+.tasks .empty { color: var(--ink-2); font-size: 1rem; }
+
+.love-row { display: flex; align-items: center; gap: 0.5rem; font-size: 1.05rem; flex-wrap: wrap; }
+.love .tag { font-size: 0.8rem; padding: 0.1rem 0.6rem; }
+.love-pet { display: block; width: min(10rem, 60%); aspect-ratio: 1; object-fit: cover; margin: 0 auto 0.6rem; border-radius: 1.2rem; background: rgba(255, 255, 255, 0.5); }
+.love p.love-text { margin: 0.2rem 0 0.7rem; }
+.love #swap { display: block; margin: 0 auto; }
+.meter { height: 0.75rem; border-radius: 999px; background: rgba(0, 0, 0, 0.1); overflow: hidden; margin: 0.5rem 0 0.25rem; }
+.meter i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
+.love-text { font-size: 0.85rem; color: var(--ink-2); }
+
+.dock { position: relative; z-index: 3; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.6rem; min-width: 0; }
+.talk { display: flex; gap: 0.7rem; align-items: center; min-width: 0; }
+.mic { flex: 1 1 0; min-width: 0; height: 4.3rem; border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+  font-size: 1.4rem; font-weight: 700; white-space: nowrap; box-shadow: 0 12px 26px rgba(0, 0, 0, 0.18); }
+.mic.listening { background: #D9534F; animation: pulse 1.2s ease-in-out infinite; }
+.mic.busy { opacity: 0.65; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 83, 79, 0.45); } 50% { box-shadow: 0 0 0 16px rgba(217, 83, 79, 0); } }
+.type { display: flex; gap: 0.5rem; padding: 0.5rem; border-radius: 1.1rem; min-width: 0; }
+/* width: 0 stops the input's built-in width from stretching the dock off the screen. */
+.type input { flex: 1 1 0; width: 0; min-width: 0; font: inherit; font-size: 1.1rem; padding: 0.6rem 0.8rem; border-radius: 0.75rem;
+  border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(255, 255, 255, 0.86); }
+.type button { flex: none; border: 0; border-radius: 0.75rem; padding: 0 1rem; background: var(--accent); color: var(--accent-ink); font-size: 1rem; }
+
+/* portrait: phones, and tablets held upright --------------------------------- */
+#app {
+  --pad-x: 0.9rem;
+  --pad-y: 0.6rem;
+  --pad-t: max(var(--pad-y), env(safe-area-inset-top));
+  --pad-r: max(var(--pad-x), env(safe-area-inset-right));
+  --pad-b: max(var(--pad-y), env(safe-area-inset-bottom));
+  --pad-l: max(var(--pad-x), env(safe-area-inset-left));
+  /* The characters' row never drops below this, and grows to fill the screen when the
+     rest is short. When the rest is long the page scrolls under the pinned mic. */
+  --stage-min: min(56vh, 150vw);
+  --stage-min: min(56svh, 150vw);
+  /* clip: what pokes out sideways (the pet's words at the edge, the bubble while it is
+     measured) never widens a phone's page */
+  position: relative; overflow-x: clip; min-height: 100vh; min-height: 100dvh; display: grid; grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(var(--stage-min), 1fr) auto;
+  grid-template-areas: "bar bar" "rail stage" "dock dock"; gap: 0.75rem 0.5rem;
+  padding: var(--pad-t) var(--pad-r) var(--pad-b) var(--pad-l);
+}
+.bar { grid-area: bar; }
+.stage { grid-area: stage; }
+/* A panel, opened from the rail: over the lower part of the screen, above the mic
+   (--dock-h is the mic row's height, kept by kid.js). */
+.side { position: fixed; z-index: 20; left: calc(var(--pad-l) + 3.6rem + 0.5rem); right: var(--pad-r); bottom: calc(var(--dock-h, 5rem) + var(--pad-b) + 0.6rem); /* (clear of the rail, to switch panels) */
+  max-height: min(64vh, calc(100vh - var(--dock-h, 5rem) - 7rem)); display: flex; flex-direction: column; }
+.side > .panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: var(--glass-strong); }
+/* The mic stays at the bottom while the list scrolls under a fade of the page colour,
+   which reaches exactly to the screen edges (any further and the phone could pan sideways). */
+.dock { grid-area: dock; position: sticky; bottom: var(--pad-b); }
+.dock::before { content: ""; position: absolute; z-index: -1; pointer-events: none; top: -1.6rem;
+  left: calc(-1 * var(--pad-l)); right: calc(-1 * var(--pad-r)); bottom: calc(-1 * var(--pad-b));
+  background: linear-gradient(180deg, transparent, var(--pc) 55%); }
+
+/* A small phone: the rail floats over the stage's left edge, so she keeps the whole
+   width (and her words have room beside her rather than over the pet). */
+@media (orientation: portrait) and (max-width: 380px) {
+  #app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "bar" "stage" "dock"; }
+  .rail { grid-area: stage; justify-self: start; }
+}
+
+/* tablet portrait ---------------------------------------------------------------- */
+@media (orientation: portrait) and (min-width: 600px) {
+  #app { --pad-x: max(1.2rem, calc((100vw - 60rem) / 2)); --pad-y: 0.9rem; --stage-min: 46vh; --stage-min: 46svh; gap: 0.9rem; }
+  .side { left: auto; width: min(36rem, calc(100vw - var(--pad-l) - var(--pad-r) - 5rem)); }
+  body.reading .side { width: min(46rem, calc(100vw - var(--pad-l) - var(--pad-r) - 5rem)); }
+  .dock { grid-template-columns: minmax(0, 38rem); justify-content: center; }
+}
+
+/* landscape: one screen ------------------------------------------------------- */
+@media (orientation: landscape) and (min-width: 600px) {
+  body { overflow: hidden; }
+  body::before { background: linear-gradient(90deg, var(--gc) 0%, var(--gc) 26%, var(--pc) 52%, var(--pc) 100%); }
+  #app {
+    --pad-x: clamp(0.6rem, 2.2vmin, 1.4rem);
+    --pad-y: var(--pad-x);
+    --side: clamp(15rem, 31vw, 27rem); /* the right column; the characters get the rest */
+    position: fixed; inset: 0; min-height: 0; overflow: hidden;
+    grid-template-columns: auto minmax(0, 1fr) var(--side);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "rail bar bar" "rail talk side" "rail talk dock";
+    gap: var(--pad-x);
+  }
+  body.reading #app { --side: clamp(20rem, 46vw, 46rem); } /* a file open: room to read it */
+  .stage { grid-area: talk; }
+  .side { grid-area: side; position: relative; z-index: 2; left: auto; right: auto; bottom: auto; width: auto; max-height: none; min-height: 0; }
+  .side > .panel { background: var(--glass); }
+  .dock { grid-area: dock; position: relative; bottom: auto; }
+  .dock::before { display: none; }
+}
+
+/* short landscape: foldables and small tablets --------------------------------- */
+@media (orientation: landscape) and (min-width: 600px) and (max-height: 640px) {
+  :root { font-size: clamp(14px, 1.2vmin + 7.5px, 18px); }
+  .bubble p { font-size: 1.2rem; }
+  .panel { padding: 0.6rem 0.8rem; }
+  .tasks button { padding: 0.4rem 0.6rem; font-size: 1rem; }
+  .mic { height: 3.4rem; font-size: 1.2rem; }
+  .ghost.round { width: 3rem; height: 3rem; }
+}
+/* A phone on its side is short: the girl gets the whole height. */
+@media (orientation: landscape) and (min-width: 600px) and (max-height: 460px) {
+  .next, .love-text { display: none; }
+  .stage { --girl-h: 90%; --floor: 7%; }
+}
+
+/* The camera at work (a check-in Mom asked for): a small live view in the top corner,
+   so it is never on without MoMo seeing it. A white flash when the photo is taken. */
+.cam { position: fixed; z-index: 35; top: max(0.8rem, env(safe-area-inset-top)); right: max(0.8rem, env(safe-area-inset-right));
+  display: grid; justify-items: center; gap: 0.3rem; padding: 0.45rem; border-radius: 1.1rem; background: var(--glass-strong); }
+.cam video { width: 8.5rem; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 0.8rem; transform: scaleX(-1); background: #223; }
+.cam span { font-size: 0.95rem; font-weight: 700; }
+.cam.flash { animation: cam-flash 0.5s ease-out; }
+@keyframes cam-flash { 0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); filter: brightness(1); } 20% { box-shadow: 0 0 0 100vmax rgba(255, 255, 255, 0.55); filter: brightness(1.8); } 100% { box-shadow: 0 0 0 100vmax rgba(255, 255, 255, 0); filter: brightness(1); } }
+
+/* sheets ------------------------------------------------------------------ */
+.sheet { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 1.2rem; background: rgba(20, 24, 32, 0.4); }
+.sheet-card { background: #fff; border-radius: 1.4rem; padding: 1.2rem 1.3rem; width: min(30rem, 100%); max-height: 92vh; overflow-y: auto; }
+.sheet-card.wide { width: min(58rem, 100%); }
+.sheet-card h2 { margin: 0.3rem 0 0.6rem; font-size: 1.2rem; }
+.sheet-card p { font-size: 1.3rem; margin: 0.25rem 0 1rem; text-align: center; }
+.sheet-card .row { display: flex; gap: 0.75rem; justify-content: center; }
+.sheet-card .row button:not(.ghost) { border: 0; border-radius: 999px; padding: 0.7rem 1.7rem; background: var(--accent); color: #fff; font-size: 1.2rem; font-weight: 700; }
+.sheet-card .ghost { background: #f4f5f7; border-color: #e3e5ea; }
+.pick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.6rem; margin-bottom: 0.5rem; }
+.pick button { border: 3px solid transparent; border-radius: 1.1rem; padding: 0; background: #f4f5f7; overflow: hidden; display: grid; }
+.pick button[aria-pressed="true"] { border-color: var(--accent); }
+.pick img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; }
+.pick span { padding: 0.35rem 0.25rem 0.5rem; font-size: 1rem; font-weight: 600; }
+.pick.places img { aspect-ratio: 16 / 10; }
+.pick.places .plain { width: 100%; aspect-ratio: 16 / 10; background: linear-gradient(135deg, var(--gc), var(--pc)); }
+#pickClose { display: block; margin: 0.5rem auto 0; }
+
+/* 图书馆: a list, then one of them — pages to look at and point at, music or a video,
+   or what a document says */
+.ghost.round { position: relative; }
+.badge { position: absolute; top: -0.25rem; right: -0.25rem; min-width: 1.35rem; height: 1.35rem; padding: 0 0.3rem; border-radius: 999px;
+  display: grid; place-items: center; background: #E5484D; color: #fff; font-size: 0.8rem; font-weight: 700; line-height: 1; }
+.files-none { color: var(--ink-2); font-size: 1.1rem; margin: 0.2rem 0 0.6rem; }
+.file-items { list-style: none; margin: 0 0 0.6rem; padding: 0; display: grid; gap: 0.5rem; }
+.file-items button { width: 100%; display: grid; grid-template-columns: 2.4rem minmax(0, 1fr) auto; align-items: center; gap: 0.7rem;
+  padding: 0.6rem 0.8rem; border: 1px solid rgba(255, 255, 255, 0.8); border-radius: 1rem; background: rgba(255, 255, 255, 0.7); text-align: left; }
+.file-items .icon { font-size: 1.6rem; text-align: center; }
+.file-items .name { display: block; font-size: 1.1rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-items .meta { display: block; font-size: 0.9rem; color: var(--ink-2); }
+.file-items .new { padding: 0.15rem 0.6rem; border-radius: 999px; background: #E5484D; color: #fff; font-size: 0.85rem; font-weight: 700; }
+#filesMore { display: block; margin: 0 auto 0.6rem; }
+.file-meta { font-size: 0.95rem; color: var(--ink-2); margin: 0 0 0.5rem; }
+.file-gist { font-size: 1.15rem; line-height: 1.6; margin: 0.4rem 0 0.6rem; }
+.file-gist:empty { display: none; }
+.file-show img, .file-show video { display: block; max-width: 100%; max-height: 55vh; margin: 0 auto; border-radius: 0.9rem; background: #f4f5f7; }
+.file-show audio { display: block; width: 100%; }
+.file-more h3 { margin: 0.6rem 0 0.2rem; font-size: 1rem; color: var(--ink-2); }
+.file-more ul { margin: 0; padding-left: 1.3rem; font-size: 1.05rem; line-height: 1.6; }
+.file-words { margin: 0.6rem 0; }
+.file-words summary { cursor: pointer; font-weight: 600; color: var(--accent); padding: 0.3rem 0; }
+.file-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 1rem; line-height: 1.7; background: #f6f7f9; border-radius: 0.9rem; padding: 0.8rem 0.9rem; }
+#fileTextMore { display: block; margin: 0.5rem auto 0; }
+.viewer .row { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: center; margin-top: 0.4rem; }
+.viewer .row button:not(.ghost) { border: 0; border-radius: 999px; padding: 0.6rem 1.5rem; background: var(--accent); color: #fff; font-size: 1.1rem; font-weight: 700; }
+.viewer .row a.ghost { display: inline-flex; align-items: center; color: var(--ink); text-decoration: none; }
+
+/* A page, to look at and to point at. It fits the panel's width (or twice that,
+   zoomed in, to scroll around); a touch drops a ring there and asks her about it.
+   Marks are in thousandths of the page, so they stay put at any size: a dashed
+   outline round each problem of a homework page, and a glowing box round what is
+   being talked about. */
+.paper-box { position: relative; overflow: auto; overscroll-behavior: contain; border-radius: 0.9rem; background: #fff;
+  box-shadow: 0 6px 18px rgba(30, 40, 60, 0.12); max-height: 62vh; touch-action: pan-x pan-y pinch-zoom; }
+.paper { position: relative; width: 100%; cursor: crosshair; }
+.paper-box.zoomed .paper { width: 200%; }
+.paper img { display: block; width: 100%; height: auto; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.marks { position: absolute; inset: 0; pointer-events: none; }
+.mark { position: absolute; border-radius: 0.45rem; }
+.mark.problem { border: 2px dashed rgba(58, 127, 162, 0.55); }
+.mark.problem b { position: absolute; left: -0.6rem; top: -0.6rem; min-width: 1.3rem; height: 1.3rem; padding: 0 0.25rem; border-radius: 999px;
+  display: grid; place-items: center; font-size: 0.75rem; background: rgba(58, 127, 162, 0.85); color: #fff; }
+.mark.hot { border: 3px solid var(--accent); background: rgba(255, 214, 10, 0.18); box-shadow: 0 0 0 4px rgba(255, 214, 10, 0.35);
+  animation: hot 1.1s ease-in-out 3; }
+@keyframes hot { 0%, 100% { box-shadow: 0 0 0 4px rgba(255, 214, 10, 0.35); } 50% { box-shadow: 0 0 0 10px rgba(255, 214, 10, 0.12); } }
+.tap { position: absolute; width: 2.4rem; height: 2.4rem; margin: -1.2rem 0 0 -1.2rem; border-radius: 50%; border: 3px solid #E5484D;
+  background: rgba(229, 72, 77, 0.15); animation: tap 1.1s ease-out infinite; }
+.tap.done { animation: none; opacity: 0.55; }
+@keyframes tap { 0% { transform: scale(0.6); opacity: 1; } 100% { transform: scale(1.4); opacity: 0.25; } }
+.pager { display: flex; align-items: center; justify-content: center; gap: 0.8rem; margin: 0.5rem 0 0; font-size: 1rem; }
+.pager button[disabled] { opacity: 0.4; }
+.point-hint { margin: 0.5rem 0 0; font-size: 0.95rem; color: var(--ink-2); text-align: center; }
+.point-hint.said { text-align: left; font-size: 1.05rem; line-height: 1.55; color: var(--ink); background: rgba(255, 255, 255, 0.75);
+  border-radius: 0.9rem; padding: 0.5rem 0.8rem; }
+/* A file being read takes the panel's height: its page fills what is left. */
+@media (orientation: landscape) and (min-width: 600px) {
+  .side > .panel { max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+  .files .paper-box { max-height: none; }
+  body.reading .files { display: flex; flex-direction: column; height: 100%; }
+  body.reading .viewer { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+  body.reading .viewer .paper-box { flex: 1 1 auto; min-height: 10rem; }
+  /* Where the panel can be measured: the page fills it, with its pager and the line
+     saying to touch it; the rest (who sent it, what it says, its words, its buttons)
+     is below, to scroll to. Her words are in her bubble, beside it. */
+  @supports (height: 1cqh) {
+    body.reading .side > .files { container-type: size; }
+    body.reading .viewer { flex: 1 0 auto; }
+    body.reading .viewer > * { order: 1; flex: none; }
+    body.reading .viewer > .panel-top, body.reading .viewer > .paper-box, body.reading .viewer > .pager, body.reading .viewer > .point-hint { order: 0; }
+    body.reading .viewer > .file-meta { margin-top: 0.6rem; }
+    body.reading .viewer .paper-box { height: calc(100cqh - 5.3rem); min-height: 12rem; }
+    body.reading .viewer:has(> .pager:not([hidden])) .paper-box { height: calc(100cqh - 8.4rem); }
+    body.reading .viewer .point-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  }
+}
+@media (max-width: 599px) {
+  .pick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bubble p { font-size: 1.15rem; } /* fits under her chin on a phone, clear of the pet */
+}
+/* A small phone: a size smaller still, so her words fit beside the pet rather than over it. */
+@media (max-width: 380px) {
+  .bubble p { font-size: 1.05rem; }
+}
+@media (orientation: landscape) and (max-height: 640px) {
+  .pick img { aspect-ratio: 1 / 1; object-position: 50% 15%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .girl .frame, .pet .sprite, .pet .sprite::before, .mic.listening, .bubble.pop, .dots i { animation: none !important; }
+}

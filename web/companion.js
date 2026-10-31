@@ -1595,10 +1595,12 @@ function encodeWav16k(bufs, total, srcRate) {
 // Sends a photo or PDF for the companion to read. Photos are made smaller on the device
 // first (a phone photo is several MB; 2000 px is plenty to read a page). Resolves with
 // what the server made of it.
-// A photo or document for the companion: a picture is made smaller first (2000 px is
-// plenty to read), anything else goes as it is and the server works out what it is.
-export async function sendFile(file) {
-  if (file.size > 30_000_000) throw new Error('文件太大了，最多 30 MB');
+// Any file for the companion: a picture is made smaller first (2000 px is plenty to read),
+// anything else goes as it is and the server works out what it is. onProgress(0…1) as
+// it goes up. Resolves to what she made of it (or { pending, line } for a long one,
+// whose result comes later as a 'say' event).
+export async function sendFile(file, onProgress = () => {}) {
+  if (file.size > 2 * 1024 ** 3) throw new Error('文件太大了，最多 2 GB');
   let body = file;
   let type = file.type || 'application/octet-stream';
   if (type.startsWith('image/')) {
@@ -1615,14 +1617,35 @@ export async function sendFile(file) {
       /* a picture the browser can't draw: send it as it is */
     }
   }
-  const res = await fetch(`/api/upload?name=${encodeURIComponent(file.name || '')}`, { method: 'POST', headers: { 'Content-Type': type }, body });
-  if (res.status === 401) {
-    app.onLocked();
-    throw new Error('locked');
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || '没发成功');
-  return data;
+  // XMLHttpRequest, not fetch: only it tells how much has gone up.
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', `/api/upload?name=${encodeURIComponent(file.name || '')}`);
+    x.setRequestHeader('Content-Type', type);
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.onload = () => {
+      if (x.status === 401) {
+        app.onLocked();
+        reject(new Error('locked'));
+        return;
+      }
+      let data = {};
+      try {
+        data = JSON.parse(x.responseText);
+      } catch {
+        /* not JSON: the error below */
+      }
+      if (x.status >= 400) reject(new Error(data.error || '没发成功'));
+      else resolve(data);
+    };
+    x.onerror = () => reject(new Error('网络断了，没发成功'));
+    x.send(body);
+  });
+}
+
+// The words on the mic button while she is busy (setBusy also sets her thinking).
+export function busyLabel(text) {
+  if (app.busy) $('mic').textContent = text;
 }
 
 // A picture from the front camera, for a check-in Mom asked for. A small live view

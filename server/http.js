@@ -1,7 +1,7 @@
 // HTTP routes. No framework: a small table of (method, path) → handler.
 // Pages and assets are served from web/; everything else is JSON under /api.
 
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { pipeline } from 'node:stream';
@@ -41,6 +41,8 @@ class HttpError extends Error {
   }
 }
 
+
+const READ_WAIT_MS = 25000; // an upload waits this long for her to read it, then answers "pending"
 
 export function createHandler({
   config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, coach = null, webDir,
@@ -125,19 +127,34 @@ export function createHandler({
     return { ...r, state: kidState() };
   });
 
-  // A photo or document for the companion to read (from MoMo's page or Mom's): a
-  // picture, PDF, Word, Excel, PPT or text file. The body is the file itself; ?name= is
-  // its name. She acts on it and says what she did.
+  // Any file for the companion (from MoMo's page or Mom's): the body is the file itself,
+  // written to disk as it comes; ?name= is its name. It is kept, and she reads it: what
+  // she reads within READ_WAIT_MS is answered here; a slower one ("pending") is told on
+  // the sender's page when she's done.
   on('POST', '/api/upload', 'kid', async (ctx) => {
     const mime = String(ctx.req.headers['content-type'] || '').split(';')[0].trim();
-    if (ctx.body.length < 10) throw new HttpError(400, '文件是空的');
     const who = ctx.kid ? 'kid' : 'mom';
+    const name = ctx.url.searchParams.get('name') || '';
     const t0 = Date.now();
-    const r = await need(eyes, '看照片').take({ who, mime, name: ctx.url.searchParams.get('name') || '', buf: ctx.body });
-    console.log(`[eyes] ${who} sent ${Math.round(ctx.body.length / 1024)} KB: ${r.kind}, ${r.changes.length} changes, ${Date.now() - t0} ms`);
+    const id = await need(files, '文件').receive(ctx.req, { who, name, mime, max: config.limits.uploadBytes });
+    const reading = need(eyes, '看文件').take(id);
+    const r = await Promise.race([reading, new Promise((done) => setTimeout(done, config.readWaitMs ?? READ_WAIT_MS, null))]);
+    const size = `${Math.round(store.getFile(id).bytes / 1024)} KB`;
+    if (!r) {
+      console.log(`[eyes] ${who} sent ${size}: still reading after ${Date.now() - t0} ms`);
+      reading.then((late) => {
+        console.log(`[eyes] ${who}'s ${size}: ${late.kind}, ${late.changes.length} changes, ${Date.now() - t0} ms`);
+        eyes.tell(who, late);
+        if (late.changes.length) hub.send({ type: 'refresh' });
+      });
+      const line = '收到啦，我先帮你存好了。这个有点长，我慢慢读，读完马上告诉你。';
+      speech(line);
+      return { pending: true, fileId: id, kind: 'reading', changes: [], line, state: kidState() };
+    }
+    console.log(`[eyes] ${who} sent ${size}: ${r.kind}, ${r.changes.length} changes, ${Date.now() - t0} ms`);
     speech(r.line);
     return { ...r, state: kidState() };
-  }, { raw: 30_000_000 });
+  }, { stream: true });
 
   // The tablet's answer to a check-in: { image: JPEG base64, wav?: base64, error? }.
   on('POST', '/api/checks/:id', 'kid', (ctx) => {
@@ -286,32 +303,72 @@ export function createHandler({
   on('GET', '/api/parent/feed', 'parent', (ctx) => {
     const date = isDate(ctx.url.searchParams.get('date')) ? ctx.url.searchParams.get('date') : family.now().date;
     const events = store.listEvents(date, 80).map((e) => ({
-      id: e.id, at: e.at, who: e.who, kind: e.kind, text: e.text, fileId: e.file_kind ? e.file_id : null, doc: e.file_kind === 'doc',
+      id: e.id, at: e.at, who: e.who, kind: e.kind, text: e.text, fileId: e.file_kind ? e.file_id : null, doc: e.file_kind === 'doc' || e.file_kind === 'file',
       undo: Boolean(e.data && (e.data.courses || (e.data.added && e.data.added.length)) && !e.data.undone),
       undone: Boolean(e.data && e.data.undone),
     }));
     return { date, events, unread: post ? post.unreadForMom() : [] };
   });
 
-  // A photo or document, for Mom's eyes only; ?download=1 saves it under its own name.
+  // A photo or file, for Mom's eyes only, sent a piece at a time; ?download=1 saves it
+  // under its own name.
   on('GET', '/api/parent/files/:id', 'parent', (ctx) => {
-    const f = need(files, '照片').read(Number(ctx.params.id));
-    if (!f) throw new HttpError(404, '这个文件已经过期删除了');
-    const name = f.file.name || `文件${f.file.id}.${MIME_EXT[f.file.mime] || 'bin'}`;
-    const headers = ctx.url.searchParams.get('download') ? { 'Content-Disposition': `attachment; filename="file.${MIME_EXT[f.file.mime] || 'bin'}"; filename*=UTF-8''${encodeURIComponent(name)}` } : {};
-    return { status: 200, type: f.file.mime, body: f.buf, private: true, headers };
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || !existsSync(need(files, '文件').pathOf(f))) throw new HttpError(404, '这个文件已经删除了');
+    const ext = MIME_EXT[f.mime] || (/\.([a-z0-9]{1,8})$/i.exec(f.name) || [])[1] || 'bin';
+    const name = f.name || `文件${f.id}.${ext}`;
+    const headers = { 'Content-Length': f.bytes, 'Cache-Control': 'private, max-age=3600' };
+    if (ctx.url.searchParams.get('download')) headers['Content-Disposition'] = `attachment; filename="file.${ext}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+    return { status: 200, type: f.mime, headers, stream: files.stream(f) };
   });
 
-  // What the companion made of a document: its title, gist, points, dates, things to do.
+  // A file's card: what it is, how far reading it got, who may ask about it, and what
+  // the companion made of it (a document: title, gist, points, dates, things to do).
   on('GET', '/api/parent/docs/:id', 'parent', (ctx) => {
-    const d = need(eyes, '文件').document(ctx.params.id);
-    if (!d) throw new HttpError(404, '这个文件已经过期删除了');
-    const r = d.result;
-    const doc = r.doc ? { ...r.doc, dates: r.doc.dates.map((x) => ({ ...x, dateZh: dateZh(x.date) })) } : null;
-    return {
-      id: d.id, at: d.at, who: d.who, name: d.name, type: d.type, typeZh: TYPE_ZH[d.type] || '', size: d.parts > 1 && PART_ZH[d.type] ? `${d.parts} ${PART_ZH[d.type]}` : '',
-      kind: r.kind, summary: r.summary, doc, cut: Boolean(r.cut || r.partial), chars: d.text.length,
-    };
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    return fileCard(f);
+  });
+
+  // All the files people sent, newest first, or those that best match ?q= (names,
+  // summaries and what is in them); ?offset= for more.
+  on('GET', '/api/parent/library', 'parent', (ctx) => {
+    const q = String(ctx.url.searchParams.get('q') || '').trim().slice(0, 60);
+    const offset = Math.max(0, Number(ctx.url.searchParams.get('offset')) || 0);
+    let list;
+    if (q) {
+      // Files called that first, then those with it in them.
+      const hits = need(eyes, '文件').search(q, { limit: 30 });
+      const named = store.listUploads({ limit: 1000 }).filter((f) => f.name.includes(q));
+      const inside = store.listUploads({ ids: hits.map((h) => h.id) }).filter((f) => !named.some((n) => n.id === f.id));
+      list = [...named, ...inside].map((f) => ({ ...f, snippet: (hits.find((h) => h.id === f.id) || {}).snippet }));
+    } else list = store.listUploads({ offset, limit: 30 });
+    return { ...store.uploadStats(), q, offset, files: list.map((f) => ({ ...fileCard(f), snippet: f.snippet || '' })) };
+  });
+
+  // Mom decides whether the companion may use a file with MoMo too.
+  on('POST', '/api/parent/files/:id/share', 'parent', (ctx) => {
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    if (f.who === 'kid') throw new HttpError(400, '沫沫发的文件，她都能问');
+    store.setFileShared(f.id, Boolean(ctx.body.kid));
+    return fileCard(store.getFile(f.id));
+  });
+
+  on('POST', '/api/parent/files/:id/delete', 'parent', (ctx) => {
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    files.remove(f.id);
+    if (eyes) eyes.forgetText(f.id);
+    return { ok: true, ...store.uploadStats() };
+  });
+
+  // Read a file again (one she couldn't read, or to read it afresh).
+  on('POST', '/api/parent/files/:id/reread', 'parent', (ctx) => {
+    const f = store.getFile(Number(ctx.params.id));
+    if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
+    need(eyes, '看文件').resume([f.id]);
+    return fileCard(store.getFile(f.id));
   });
 
   // Takes back what a photo changed: the old timetable, or the homework tasks it added.
@@ -469,6 +526,18 @@ export function createHandler({
     };
   }
 
+  // A file as Mom's page shows it.
+  function fileCard(f) {
+    const r = f.result || {};
+    const type = r.type || '';
+    const doc = r.doc ? { ...r.doc, dates: r.doc.dates.map((x) => ({ ...x, dateZh: dateZh(x.date) })) } : null;
+    return {
+      id: f.id, at: f.at, who: f.who, name: f.name, kind: f.kind, mime: f.mime, bytes: f.bytes, status: f.status, shared: f.who === 'kid' || Boolean(f.shared),
+      type, typeZh: TYPE_ZH[type] || (f.kind === 'photo' ? '照片' : ''), size: r.parts > 1 && PART_ZH[type] ? `${r.parts} ${PART_ZH[type]}` : '',
+      read: r.kind || null, summary: r.summary || '', doc, cut: Boolean(r.cut || r.partial),
+    };
+  }
+
   function lookedToday(date) {
     const { n, last } = store.eventCount(date, 'check', { withFile: true });
     return n ? { n, last: nowIn(family.timeZone, new Date(last)).time } : null;
@@ -609,7 +678,7 @@ export function createHandler({
       }
       if (req.method === 'POST') {
         const o = m.route.opts;
-        ctx.body = o.raw ? await readRaw(req, o.raw) : await readJson(req, o.limit || (pathname === '/api/asr' ? 2_000_000 : 64_000));
+        if (!o.stream) ctx.body = o.raw ? await readRaw(req, o.raw) : await readJson(req, o.limit || (pathname === '/api/asr' ? 2_000_000 : 64_000));
       }
 
       const out = await m.route.fn(ctx);

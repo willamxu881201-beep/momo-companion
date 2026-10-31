@@ -181,11 +181,13 @@ export class Coach {
     const homework = tasks.filter((x) => open(x) && !x.time).map((x) => x.title);
     const courses = (d) => (d.day ? `${d.label}，课程：${d.courses.map((c) => (c.note ? `${c.name}（${c.note}）` : c.name)).join('、') || '还没填'}` : '不上学');
     switch (moment.key) {
-      case 'soon':
+      case 'soon': {
+        const left = Math.max(1, timeToMinutes(t.time) - now.minutes);
         return {
-          what: `再过 5 分钟就是「${t.title}」（${t.time} 开始，约 ${t.minutes} 分钟）。提醒 TA 先准备一下，比如喝口水、上个厕所、把要用的东西拿出来。`,
-          line: `${k}，再过五分钟就是${t.title}啦，先去喝口水、准备一下吧。`,
+          what: `再过 ${left} 分钟就是「${t.title}」（${t.time} 开始，约 ${t.minutes} 分钟）。提醒 TA 先准备一下，比如喝口水、上个厕所、把要用的东西拿出来。`,
+          line: `${k}，${left > 1 ? `再过${['', '', '两', '三', '四', '五'][left]}分钟` : '马上'}就是${t.title}啦，先去喝口水、准备一下吧。`,
         };
+      }
       case 'start':
         return {
           what: `「${t.title}」的时间到了${place ? `，你们一起到${place}去` : ''}，高高兴兴地邀请 TA 开始。${moment.place === 'study' && homework.length ? `今天要做的作业有：${homework.join('、')}，可以建议先做哪一件。` : ''}`,

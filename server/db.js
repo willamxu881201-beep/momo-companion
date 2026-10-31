@@ -84,8 +84,15 @@ const COLUMNS = {
     started_at: 'INTEGER', // MoMo said she started it
     coached: "TEXT NOT NULL DEFAULT ''", // what the companion has already said about it (coach.js)
   },
-  files: { text: 'TEXT' },
+  files: {
+    text: 'TEXT', // a document's words, for answering from
+    status: "TEXT NOT NULL DEFAULT 'read'", // reading | read | stored (kept, not readable) | failed
+    shared: 'INTEGER NOT NULL DEFAULT 1', // the companion may use it with MoMo too
+  },
 };
+
+// Uploads are kept until Mom deletes them (only the tablet's check-in snapshots expire).
+export const FOREVER = 8_640_000_000_000_000;
 
 export const DEFAULT_SETTINGS = {
   cycle: { cycleLength: 6, anchorDate: null, anchorDay: null, schoolWeekdays: [1, 2, 3, 4, 5] },
@@ -105,6 +112,8 @@ export function openDb(file) {
     const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
     for (const [name, type] of Object.entries(cols)) if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   }
+  // Uploads from before they were kept for good: keep them too.
+  db.prepare("UPDATE files SET expires = ? WHERE who IN ('kid', 'mom') AND expires < ?").run(FOREVER, FOREVER);
   return new Store(db);
 }
 
@@ -364,6 +373,47 @@ export class Store {
 
   setFileText(id, text) {
     this.db.prepare('UPDATE files SET text = ? WHERE id = ?').run(text, id);
+  }
+
+  // What a file turned out to be (photo, doc, or file: kept but not readable) and how
+  // far reading it got.
+  setFileKind(id, kind, mime) {
+    this.db.prepare('UPDATE files SET kind = ?, mime = COALESCE(?, mime) WHERE id = ?').run(kind, mime || null, id);
+  }
+
+  setFileStatus(id, status) {
+    this.db.prepare('UPDATE files SET status = ? WHERE id = ?').run(status, id);
+  }
+
+  setFileShared(id, shared) {
+    this.db.prepare('UPDATE files SET shared = ? WHERE id = ?').run(shared ? 1 : 0, id);
+  }
+
+  // Everything people sent (not the tablet's snapshots), newest first, a page of `limit`
+  // from `offset`; ids: just these, in that order.
+  listUploads({ offset = 0, limit = 30, ids = null } = {}) {
+    const cols = 'id, at, who, kind, mime, name, bytes, result, status, shared, length(text) AS chars';
+    const rows = ids
+      ? ids.map((id) => this.db.prepare(`SELECT ${cols} FROM files WHERE id = ? AND who IN ('kid', 'mom')`).get(id)).filter(Boolean)
+      : this.db.prepare(`SELECT ${cols} FROM files WHERE who IN ('kid', 'mom') ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`).all(limit, offset);
+    return rows.map((f) => ({ ...f, result: f.result ? JSON.parse(f.result) : null }));
+  }
+
+  uploadStats() {
+    return plain(this.db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS bytes FROM files WHERE who IN ('kid', 'mom')").get());
+  }
+
+  // Files with words to search (not the words themselves: getFileText), newest first;
+  // forKid: only those MoMo may ask about.
+  textFiles({ forKid = false } = {}) {
+    return this.db
+      .prepare(`SELECT id, at, who, name, result FROM files WHERE text IS NOT NULL AND text != ''${forKid ? " AND (who = 'kid' OR shared = 1)" : ''} ORDER BY at DESC`)
+      .all()
+      .map((f) => ({ ...f, result: f.result ? JSON.parse(f.result) : null }));
+  }
+
+  filesWithStatus(status) {
+    return this.db.prepare('SELECT * FROM files WHERE status = ? ORDER BY id').all(status).map(plain);
   }
 
   getFileText(id) {

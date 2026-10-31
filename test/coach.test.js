@@ -71,6 +71,9 @@ test('she speaks up through a task: before it, at its time, a nudge, check-ins, 
   assert.deepEqual(said, { '15:55': 'soon', '16:00': 'start', '16:15': 'nudge', '16:18': 'mid15', '16:30': 'mid30', '16:40': 'end', '16:55': 'over' });
   const lines = c.sent.filter((e) => e.proactive);
   assert.match(lines[0].line, /^沫沫，再过五分钟就是写作业啦/);
+  const late = setup(); // the tablet opened a minute before
+  await run(late, '15:59', '15:59');
+  assert.match(late.sent.find((e) => e.proactive).line, /^沫沫，马上就是写作业啦/);
   assert.equal(lines[1].type, 'reminder');
   assert.equal(lines[1].line, '沫沫，写作业时间到！我们去书房吧，先把要用的书本拿出来。');
   assert.equal(lines[2].gentle, true);

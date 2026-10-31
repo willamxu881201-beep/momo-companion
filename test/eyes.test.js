@@ -43,6 +43,7 @@ let view = null;
 let reading = null;
 let readArgs = null;
 let ocrCalls = 0;
+let slow = 0; // ms the document model takes
 const files = new Files(store, dataDir);
 const eyes = new Eyes({
   family, store, files, hub, momHub, config,
@@ -50,6 +51,7 @@ const eyes = new Eyes({
   look: async () => view,
   readDoc: async (args) => {
     readArgs = args;
+    if (slow) await new Promise((r) => setTimeout(r, slow));
     if (reading instanceof Error) throw reading;
     return structuredClone(reading);
   },
@@ -138,7 +140,7 @@ test("Mom's photo of a timetable replaces the courses; undo puts the old ones ba
   store.setSetting('cycle', { anchorDate: '2026-10-26', anchorDay: 1 });
 });
 
-test("a page of homework is kept in mind for helping; what isn't a picture or a document is refused", async () => {
+test('a page of homework is kept in mind for helping', async () => {
   picture = {
     kind: 'homework_page', summary: '数学练习', unsure: '', timetable: null, homework: [],
     page: { subject: '数学', problems: [{ n: '三', text: '6箱粉笔，每箱48盒，一共多少盒？', done: '' }], hint: '想想乘法' },
@@ -147,7 +149,6 @@ test("a page of homework is kept in mind for helping; what isn't a picture or a 
   assert.match(r.line, /一共 1 道题/);
   assert.equal(eyes.currentHomework().problems[0].n, '三');
   assert.equal(brain.extras().homework.subject, '数学');
-  assert.equal((await kid.post('/api/upload', Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), 'application/octet-stream')).status, 415);
 });
 
 test('Mom looks in: the tablet is asked, takes a picture, and Mom hears what it shows', async () => {
@@ -244,14 +245,18 @@ test("MoMo's words for Mom go to Mom's page, and the companion's tools for Mom w
   assert.match(events.text, /妈妈确认了「背古诗」/);
 });
 
-test('old pictures are cleared out after a week', () => {
-  const count = () => readdirSync(join(dataDir, 'files'), { recursive: true }).filter((f) => /\.(jpg|png)$/.test(f)).length;
-  const n = count();
-  assert.ok(n > 0);
+test("the tablet's snapshots are cleared out after a week; what people send is kept", () => {
+  const kinds = () => store.db.prepare('SELECT who, COUNT(*) AS n FROM files GROUP BY who ORDER BY who').all().map((r) => `${r.who} ${r.n}`);
+  const disk = () => readdirSync(join(dataDir, 'files'), { recursive: true }).filter((f) => /\.\w+$/.test(f)).length;
+  const before = kinds();
+  assert.ok(before.some((k) => k.startsWith('tablet')) && before.some((k) => k.startsWith('kid')));
+  const files0 = disk();
   assert.equal(files.sweep(), 0, 'nothing is a week old yet');
-  assert.equal(files.sweep(Date.now() + 8 * 86400000), n);
-  assert.equal(count(), 0);
-  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM files').get().n, 0);
+  const snapshots = Number(before.find((k) => k.startsWith('tablet')).split(' ')[1]);
+  assert.equal(files.sweep(Date.now() + 8 * 86400000), snapshots);
+  assert.deepEqual(kinds(), before.filter((k) => !k.startsWith('tablet')));
+  assert.equal(disk(), files0 - snapshots);
+  assert.equal(files.sweep(Date.now() + 3650 * 86400000), 0, 'ten years on, still there');
 });
 
 test('a PDF is read page by page (with pdftoppm)', async (t) => {
@@ -318,7 +323,7 @@ test("Mom's Word notice is read and summed up; she can open its card, save it, a
   assert.match(read.text, /^《运动会通知.docx》的全文：\n关于举行秋季运动会的通知\n/);
   assert.match(read.text, /当天穿运动服和运动鞋/);
   assert.equal(eyes.documents()[0].id, e.fileId);
-  assert.equal(brain.runMomTool({ name: 'read_document', args: { doc_id: 99999, question: '什么' } }).text, '没有这个文件，可能已经过期删除了');
+  assert.equal(brain.runMomTool({ name: 'read_document', args: { doc_id: 99999, question: '什么' } }).text, '没有这个文件，可能被妈妈删掉了');
   assert.equal(eyes.currentDocument(), null, "Mom's document isn't on MoMo's companion's mind");
 });
 
@@ -352,19 +357,115 @@ test('a scanned PDF is read as pictures: one model call a page, then summed up',
   assert.match(r.line, /^我看完了《家长会通知》。11月12日晚上7点开家长会。里面的日子：11月12日家长会。/);
 });
 
-test('a file with nothing to read, or that the model could not read, is refused and not kept', async () => {
-  const count = () => store.db.prepare('SELECT COUNT(*) AS n FROM files').get().n;
-  const before = count();
-  const blank = await mom.post('/api/upload?name=空白.txt', Buffer.from('   \n\n    \n'), 'text/plain');
-  assert.equal(blank.status, 415);
-  assert.match((await blank.json()).error, /没有能读的文字/);
-  assert.equal(count(), before);
-  assert.equal((await mom.post('/api/upload?name=a.zip', Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(40)]), 'application/zip')).status, 415);
-  // The model failing: Mom hears so, and the file isn't kept either.
+test("any file is kept: one with nothing to read, one she can't read, one the model failed on", async () => {
+  const status = (id) => store.getFile(id).status;
+  const blank = await (await mom.post('/api/upload?name=空白.txt', Buffer.from('   \n\n    \n'), 'text/plain')).json();
+  assert.equal(blank.line, '收到《空白.txt》，我帮你存好了。不过它里面没有能读的文字。');
+  assert.equal(status(blank.fileId), 'stored');
+  const zip = await (await mom.post('/api/upload?name=照片.zip', Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(40)]), 'application/zip')).json();
+  assert.equal(zip.line, '收到《照片.zip》，我帮你存好了。不过它是压缩包，我还读不了。');
+  const song = await (await kid.post('/api/upload?name=小星星.mp3', Buffer.concat([Buffer.from('ID3'), Buffer.alloc(200)]), 'audio/mpeg')).json();
+  assert.match(song.line, /存好了。不过它是音频，我还读不了。/);
+  const feed = (await (await mom.get('/api/parent/feed')).json()).events;
+  assert.ok(feed.some((e) => e.kind === 'file' && e.text === 'MoMo发来《小星星.mp3》（是音频，我还读不了，先存着）'));
+  // The model failing: kept too, marked to be read again.
   reading = new Error('the model is down');
-  const failed = await mom.post('/api/upload?name=story.txt', fixture('story.txt'), 'text/plain');
-  assert.equal(failed.status, 502);
-  assert.equal((await failed.json()).error, '我这会儿没读成这个文件，等一下再发一次吧');
-  assert.equal(count(), before);
+  const failed = await (await mom.post('/api/upload?name=story.txt', fixture('story.txt'), 'text/plain')).json();
+  assert.equal(failed.line, '我这会儿没读成这个文件，先帮你存好了，等一下可以再让我读一次。');
+  assert.equal(status(failed.fileId), 'failed');
+  // ...and when it's read again, it is told on Mom's page.
+  reading = { ...notice, doc: { ...notice.doc, title: '四季的森林', gist: '一个关于森林四季的故事。', dates: [], type: '故事' } };
+  momHub.got.length = 0;
+  await mom.post(`/api/parent/files/${failed.fileId}/reread`, {});
+  for (let i = 0; i < 50 && status(failed.fileId) !== 'read'; i += 1) await new Promise((r) => setTimeout(r, 20));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(status(failed.fileId), 'read');
+  assert.match(momHub.got.find((e) => e.type === 'say').line, /^我看完了《四季的森林》/);
+});
+
+// ---- the library -----------------------------------------------------------------------
+
+test("Mom's library: every file kept, newest first, found by what is in it; she shares, saves and deletes", async () => {
+  const lib = await (await mom.get('/api/parent/library')).json();
+  assert.ok(lib.n >= 8 && lib.files.length >= 8);
+  assert.ok(lib.files.every((f, i) => i === 0 || f.at <= lib.files[i - 1].at), 'newest first');
+  assert.ok(lib.files.every((f) => f.who !== 'tablet'), "the tablet's snapshots aren't in it");
+
+  const found = (await (await mom.get(`/api/parent/library?q=${encodeURIComponent('接力赛')}`)).json()).files;
+  assert.equal(found[0].name, '运动会通知.docx');
+  assert.match(found[0].snippet, /接力赛/);
+  const byName = (await (await mom.get(`/api/parent/library?q=${encodeURIComponent('小星星')}`)).json()).files;
+  assert.equal(byName[0].name, '小星星.mp3', 'a file that was never read is found by its name');
+
+  // A school notice of Mom's: the companion may use it with MoMo; she can say no.
+  const notice = found[0];
+  assert.equal(notice.shared, true);
+  const card = await (await mom.post(`/api/parent/files/${notice.id}/share`, { kid: false })).json();
+  assert.equal(card.shared, false);
+  assert.equal((await mom.post(`/api/parent/files/${byName[0].id}/share`, { kid: false })).status, 400, "MoMo's own files are hers to ask about");
+
+  // Saving it: sent a piece at a time, under its own name.
+  const saved = await mom.get(`/api/parent/files/${notice.id}?download=1`);
+  assert.equal(saved.headers.get('content-length'), String(fixture('notice.docx').length));
+  assert.deepEqual(Buffer.from(await saved.arrayBuffer()), fixture('notice.docx'));
+
+  // Deleting a file takes it off the disk, out of the list and out of her reach.
+  const before = lib.n;
+  const gone = await (await mom.post(`/api/parent/files/${byName[0].id}/delete`, {})).json();
+  assert.equal(gone.n, before - 1);
+  assert.equal((await mom.get(`/api/parent/files/${byName[0].id}`)).status, 404);
+  assert.equal((await mom.post(`/api/parent/files/${byName[0].id}/delete`, {})).status, 404);
+});
+
+test('the companion looks things up herself: Mom in every file, MoMo in her own and the shared ones', async () => {
+  // Mom's work paper: hers alone.
+  reading = { ...notice, doc: { ...notice.doc, title: '项目计划', type: '工作文件', gist: '下季度的项目计划。', dates: [] } };
+  const plan = await (await mom.post('/api/upload?name=计划.txt', Buffer.from('项目计划\n第三季度要完成新版官网，预算十二万。'), 'text/plain')).json();
+  assert.equal(store.getFile(plan.fileId).shared, 0);
+
+  const momFound = brain.runMomTool({ name: 'search_files', args: { query: '官网预算' } }).text;
+  assert.match(momFound, new RegExp(`^\\[doc=${plan.fileId}\\] .*妈妈发来的《计划.txt》：下季度的项目计划。`));
+  assert.match(momFound, /相关的一段：.*预算十二万/);
+  assert.equal(brain.runMomTool({ name: 'search_files', args: { query: '恐龙化石' } }).text, '没找到相关的文件');
+
+  // Before the model is asked, the words of the files that may answer Mom are put in
+  // front of it: the right file, and only when something matches.
+  const prompt = brain.promptForMom('我发过的文件里，哪个提到了接力赛？几点？');
+  assert.match(prompt, /^【可能和妈妈这句话有关的文件原文】/m);
+  assert.match(prompt, /\[doc=\d+\]《运动会通知\.docx》的全文：\n[^]*接力赛 \| 14:00/);
+  assert.equal(prompt.match(/^\[doc=\d+\]《/gm).length, 1, 'only the file that matches');
+  assert.doesNotMatch(brain.promptForMom('你好呀，今天辛苦了'), /^【可能和妈妈这句话有关的文件原文】/m);
+
+  const kidAsks = (query, said) => brain.runTool({ name: 'look_up_files', args: { query } }, null, said).text;
+  assert.equal(kidAsks('官网预算', '妈妈的官网预算是多少'), '在发给你的文件里没找到这个', "Mom's work stays hers");
+  assert.match(kidAsks('分子', '课件里分子在哪里'), /^在《lesson.pptx》里找到：\n.*分数线上面是分子/s);
+});
+
+test('a file that takes long to read: the upload is answered at once, and the result comes when it is done', async () => {
+  config.readWaitMs = 30;
+  slow = 200;
+  reading = { ...notice, doc: { ...notice.doc, title: '一本长书', gist: '很长的书。', dates: [] } };
+  momHub.got.length = 0;
+  const r = await (await mom.post('/api/upload?name=长书.txt', fixture('story.txt'), 'text/plain')).json();
+  assert.equal(r.pending, true);
+  assert.equal(r.line, '收到啦，我先帮你存好了。这个有点长，我慢慢读，读完马上告诉你。');
+  assert.equal(store.getFile(r.fileId).status, 'reading');
+  await new Promise((done) => setTimeout(done, 400));
+  assert.equal(store.getFile(r.fileId).status, 'read');
+  assert.match(momHub.got.find((e) => e.type === 'say').line, /^我看完了《一本长书》/);
+  config.readWaitMs = undefined;
+  slow = 0;
+});
+
+test('a file bigger than the server takes is turned away, and nothing of it is left', async () => {
+  config.limits.uploadBytes = 1000;
+  const rows = store.db.prepare('SELECT COUNT(*) AS n FROM files').get().n;
+  const disk = readdirSync(join(dataDir, 'files'), { recursive: true }).length;
+  const res = await mom.post('/api/upload?name=big.bin', Buffer.alloc(5000, 1), 'application/octet-stream');
+  assert.equal(res.status, 413);
+  assert.match((await res.json()).error, /文件太大了/);
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM files').get().n, rows);
+  assert.equal(readdirSync(join(dataDir, 'files'), { recursive: true }).length, disk);
+  delete config.limits.uploadBytes;
 });
 

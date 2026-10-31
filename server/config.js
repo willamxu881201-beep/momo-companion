@@ -29,8 +29,8 @@ export const config = {
     chatPerDay: num(env.CHAT_PER_DAY, 80),
     asrPerDay: num(env.ASR_PER_DAY, 150),
     ttsCharsPerDay: num(env.TTS_CHARS_PER_DAY, 20000),
-    visionPerDay: num(env.VISION_PER_DAY, 60), // photos and check-ins together
-    docsPerDay: num(env.DOCS_PER_DAY, 30), // documents (Word, Excel, PPT, PDF, text)
+    visionPerDay: num(env.VISION_PER_DAY, 60), // check-ins (what people send has no daily limit)
+    uploadBytes: num(env.UPLOAD_MAX_MB, 2048) * 1048576, // the biggest file anyone can send
     momChatPerDay: num(env.MOM_CHAT_PER_DAY, 80),
     notifyPerDay: num(env.NOTIFY_PER_DAY, 30),
   },

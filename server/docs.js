@@ -13,12 +13,13 @@
 import { arkChat } from './ark.js';
 import { READ_RULES, READ_SHAPES, isDate, parseJson, shapeRead, str } from './vision.js';
 
-const READ_CHARS = 24000; // of a document's text, what the model reads at first
+const READ_CHARS = 24000; // a document this long is read in one go
+const SECTION = 16000; // a longer one is read a section of about this many characters at a time
 const PIECE = 600; // characters in one piece of a document
 
-const DOC_PROMPT = ({ kid, name, today, tomorrow, partial }) =>
+const DOC_PROMPT = ({ kid, name, today, tomorrow, long }) =>
   [
-    `你在帮一个家庭整理 8 岁的${kid}的学习和生活。下面是一个文件里的文字（文件名：${name || '没有名字'}${partial ? '；文件很长，这里只有开头和结尾' : ''}），【】里是页、工作表或幻灯片的分隔。判断它是哪一种，只输出 JSON：`,
+    `你在帮一个家庭整理 8 岁的${kid}的学习和生活。下面是一个文件里的文字（文件名：${name || '没有名字'}${long ? '；文件很长，下面是它开头的原文，和你一段一段读过的每一部分的要点' : ''}），【】里是页、工作表或幻灯片的分隔。判断它是哪一种，只输出 JSON：`,
     '{"kind":"timetable、homework_list、homework_page 或 document",',
     ' "summary":"一句话说清这是什么，20 字以内",',
     ...READ_SHAPES,
@@ -33,17 +34,37 @@ const DOC_PROMPT = ({ kid, name, today, tomorrow, partial }) =>
 
 // text: from extract.js. Returns readPicture's shape with kind timetable, homework_list,
 // homework_page or document; a document has doc: { title, type, gist, points, dates,
-// todo, forKid }. partial: the text was too long to read whole at first.
-export async function readDocument({ apiKey, model, text, name = '', kidName = '孩子', today, tomorrow }) {
-  const partial = text.length > READ_CHARS;
-  const body = partial ? `${text.slice(0, READ_CHARS - 4000)}\n……（中间省略）……\n${text.slice(-4000)}` : text;
-  const r = await arkChat({
+// todo, forKid }. A long document is read all through: a section at a time for notes
+// (noteModel, a few at once), then once more from its beginning and all those notes.
+// chat: arkChat (a stand-in in tests).
+export async function readDocument({ apiKey, model, noteModel = model, text, name = '', kidName = '孩子', today, tomorrow, chat = arkChat }) {
+  let body = text;
+  let sections = 0;
+  if (text.length > READ_CHARS) {
+    const parts = sectionsOf(text);
+    sections = parts.length;
+    let failed = 0;
+    const notes = await inTurns(parts, 3, (part, i) =>
+      chat({
+        apiKey,
+        model: noteModel,
+        maxTokens: 500,
+        timeoutMs: 120000,
+        messages: [{ role: 'user', content: `下面是一个长文件《${name || '没有名字'}》的第 ${i + 1}/${parts.length} 部分。用几句话写下这部分讲了什么，记下重要的事实、数字、日期和要做的事，不超过 300 字，只依据这部分的文字：\n\n${part}` }],
+      }).then((r) => String(r.content || '').trim(), () => {
+        failed += 1;
+        return '（这部分没读成）';
+      }));
+    if (failed === parts.length) throw new Error('no section of the document could be read');
+    body = `${text.slice(0, 8000)}\n……\n【每一部分的要点】\n${notes.map((n, i) => `第 ${i + 1} 部分：${n}`).join('\n')}`;
+  }
+  const r = await chat({
     apiKey,
     model,
     json: true,
     maxTokens: 2500,
     timeoutMs: 120000,
-    messages: [{ role: 'user', content: `${DOC_PROMPT({ kid: kidName, name, today, tomorrow, partial })}\n\n文件里的文字：\n${body}` }],
+    messages: [{ role: 'user', content: `${DOC_PROMPT({ kid: kidName, name, today, tomorrow, long: sections > 0 })}\n\n文件里的文字：\n${body}` }],
   });
   const j = parseJson(r.content);
   const out = shapeRead(j);
@@ -54,7 +75,35 @@ export async function readDocument({ apiKey, model, text, name = '', kidName = '
     out.doc = shapeDoc(j.doc, name);
     if (!out.summary) out.summary = str(out.doc.gist, 60);
   }
-  out.partial = partial;
+  out.sections = sections;
+  return out;
+}
+
+// A long text in sections of about SECTION characters, cut at line ends.
+function sectionsOf(text) {
+  const out = [];
+  let cur = '';
+  for (const line of text.split('\n')) {
+    if (cur.length + line.length > SECTION && cur) {
+      out.push(cur);
+      cur = '';
+    }
+    cur += (cur ? '\n' : '') + line.slice(0, SECTION);
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+
+// Runs fn over the items, at most n at a time; results in order.
+async function inTurns(items, n, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  }));
   return out;
 }
 
@@ -179,6 +228,64 @@ function spread(n) {
     spans.push([a, m], [m, b]);
   }
   return out;
+}
+
+// ---- searching all of them ------------------------------------------------------------
+
+function cut(text) {
+  return pieces(text).map((p) => {
+    const tf = new Map();
+    const ts = terms(p.text);
+    for (const t of ts) tf.set(t, (tf.get(t) || 0) + 1);
+    return { where: p.where, text: p.text, tf, len: ts.length || 1 };
+  });
+}
+
+// The files that best match a question, among `files` ({ id, name, result }; textOf(id)
+// gives a file's words): each scored by its best piece (BM25 over all the files' pieces
+// together, so a word common everywhere counts for little) and by its name and summary.
+// index: kept by the caller (file id -> its pieces), so each file is cut up once.
+// Returns [{ id, score, where, snippet }], best first. The words of asking ("什么",
+// "多少") say nothing of which file is meant, and are left out.
+const ASKING = new Set(['什么', '怎么', '多少', '哪个', '哪些', '哪里', '有什', '是什', '为什', '一下']);
+
+export function searchFiles(files, query, { index = new Map(), textOf, limit = 5 } = {}) {
+  const asked = [...new Set(terms(query))].filter((t) => !ASKING.has(t));
+  if (!asked.length || !files.length) return [];
+  const all = [];
+  for (const f of files) {
+    if (!index.has(f.id)) index.set(f.id, cut(textOf(f.id)));
+    for (const p of index.get(f.id)) all.push({ id: f.id, p });
+  }
+  if (!all.length) return [];
+  const avg = all.reduce((n, x) => n + x.p.len, 0) / all.length;
+  const idf = new Map(asked.map((t) => {
+    const df = all.filter((x) => x.p.tf.has(t)).length;
+    return [t, Math.log(1 + (all.length - df + 0.5) / (df + 0.5))];
+  }));
+  const best = new Map(); // file id -> { score, piece }
+  for (const { id, p } of all) {
+    const score = asked.reduce((s, t) => {
+      const f = p.tf.get(t);
+      return f ? s + (idf.get(t) * f * 2.2) / (f + 1.2 * (0.25 + (0.75 * p.len) / avg)) : s;
+    }, 0);
+    if (score > (best.get(id)?.score || 0)) best.set(id, { score, p });
+  }
+  const hits = files.map((f) => {
+    const about = new Set(terms(`${f.name} ${aboutDoc(f.result)}`));
+    const named = asked.reduce((s, t) => (about.has(t) ? s + idf.get(t) : s), 0);
+    const b = best.get(f.id);
+    return { id: f.id, score: (b ? b.score : 0) + 0.5 * named, where: b ? b.p.where : '', snippet: b ? around(b.p.text, asked, idf) : '' };
+  });
+  return hits.filter((h) => h.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+// A bit of a piece around the rarest of the asked words it holds.
+function around(text, asked, idf) {
+  const found = asked.filter((t) => text.toLowerCase().includes(t)).sort((a, b) => idf.get(b) - idf.get(a))[0];
+  const at = found ? text.toLowerCase().indexOf(found) : 0;
+  const from = Math.max(0, at - 50);
+  return `${from ? '…' : ''}${text.slice(from, from + 140).replace(/\s+/g, ' ')}${from + 140 < text.length ? '…' : ''}`;
 }
 
 // What the companion said a document was, in a few lines (for the model, when the whole

@@ -87,6 +87,18 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'look_up_files',
+      description: '小朋友问到以前发给你的文件、书、故事、课件、通知里的内容时调用，在这些文件里查。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: '要查的内容，用文件里可能出现的词，比如 小狐狸的名字、运动会 带什么' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'tell_mom',
       description: '小朋友让你转告妈妈、告诉妈妈一件事时调用。',
       parameters: {
@@ -112,9 +124,15 @@ const MOM_TOOLS = [
   ),
   fn('tell_kid', '把妈妈的话转告给孩子（平板上会说出来）。', { text: { type: 'string', description: '要转告的话，口语、温和' } }, ['text']),
   fn(
+    'search_files',
+    '在妈妈和孩子发来的所有文件里找（文件名、摘要和内容都会找）。不知道是哪个文件、或者【最近的文件】里没有时先调用，再用 read_document 读。',
+    { query: { type: 'string', description: '要找的内容，用文件里可能出现的词' } },
+    ['query'],
+  ),
+  fn(
     'read_document',
-    '读一个文件的原文（Word、Excel、PPT、PDF 等，编号见【最近的文件】），找出和问题有关的部分。回答文件里的内容、总结或分析文件之前先调用。',
-    { doc_id: { type: 'integer', description: '【最近的文件】里的 doc 编号' }, question: { type: 'string', description: '妈妈想知道什么，用来在原文里找' } },
+    '读一个文件的原文（Word、Excel、PPT、PDF 等，编号是 [doc=…] 里的数字），找出和问题有关的部分。回答文件里的内容、总结或分析文件之前先调用。',
+    { doc_id: { type: 'integer', description: '[doc=…] 里的编号' }, question: { type: 'string', description: '妈妈想知道什么，用来在原文里找' } },
     ['doc_id', 'question'],
   ),
   fn(
@@ -292,6 +310,14 @@ export class Brain {
             : `查到 ${dateZh(d.date)}：休息，不上学`,
         };
       }
+      case 'look_up_files': {
+        const { eyes } = this.helpers;
+        const [hit] = eyes ? eyes.search(String(a.query || userText), { forKid: true, limit: 1 }) : [];
+        if (!hit) return { text: '在发给你的文件里没找到这个' };
+        const d = eyes.document(hit.id);
+        const found = d ? excerpts(d.text, `${a.query || ''} ${userText}`, 1500).text : hit.snippet;
+        return { text: `在《${hit.name || (hit.result.doc && hit.result.doc.title) || '文件'}》里找到：\n${found}` };
+      }
       case 'start_task': {
         const r = f.startTask(Number(a.task_id));
         if (!r.ok) return { text: `没开始成：${r.reason}` };
@@ -351,11 +377,17 @@ export class Brain {
 
   // ---- with Mom --------------------------------------------------------------------
 
+  // What the model is told before Mom's words: the day, the record, the latest files,
+  // and the words of any file that may answer what she just said.
+  promptForMom(userText = '') {
+    return momPrompt(this.family, this.helpers, filesFor(this.helpers.eyes, userText));
+  }
+
   async momReply(text) {
     const userText = String(text || '').trim().slice(0, 300);
     if (!userText) return { reply: '我在呢，您想问什么？', actions: [] };
     const t0 = Date.now();
-    const messages = [{ role: 'system', content: momPrompt(this.family, this.helpers) }, ...this.history('mom'), { role: 'user', content: userText }];
+    const messages = [{ role: 'system', content: this.promptForMom(userText) }, ...this.history('mom'), { role: 'user', content: userText }];
     const actions = [];
     let reply = '';
     for (let round = 0; round < 3 && !reply; round += 1) {
@@ -407,9 +439,19 @@ export class Brain {
         const r = eyes.check(a.what);
         return { text: r.text, action: r.ok ? { type: 'check', id: r.id, what: a.what } : null };
       }
+      case 'search_files': {
+        if (!eyes) return { text: '现在找不了文件' };
+        const hits = eyes.search(String(a.query || ''), { limit: 5 });
+        if (!hits.length) return { text: '没找到相关的文件' };
+        return {
+          text: hits
+            .map((h) => `[doc=${h.id}] ${when(f, h.at)} ${h.who === 'kid' ? f.profile().kidName : '妈妈'}发来的《${h.name || (h.result.doc && h.result.doc.title) || '文件'}》：${(h.result.doc && h.result.doc.gist) || h.result.summary || ''}\n  相关的一段${h.where ? `（${h.where}）` : ''}：${h.snippet}`)
+            .join('\n'),
+        };
+      }
       case 'read_document': {
         const d = eyes && eyes.document(a.doc_id);
-        if (!d) return { text: '没有这个文件，可能已经过期删除了' };
+        if (!d) return { text: '没有这个文件，可能被妈妈删掉了' };
         const ex = excerpts(d.text, String(a.question || ''), 8000);
         return {
           text: ex.whole
@@ -484,7 +526,26 @@ const when = (family, ms) => {
   return `${dateZh(t.date).replace(/ .*/, '')} ${t.time}`;
 };
 
-function momPrompt(family, { hub, post, eyes } = {}) {
+// The files that may hold the answer to what Mom just said, looked up before the model
+// is asked: an answer about a file then rests on its words even when the model doesn't
+// look it up itself. A word that is rare among the files is enough to bring one in (the
+// prompt says it may have nothing to do with what she said); a second file only when it
+// matches nearly as well as the first.
+const FOUND_MIN = 3;
+const FOUND_CHARS = 2000;
+
+function filesFor(eyes, text) {
+  const hits = eyes && text ? eyes.search(text, { limit: 2 }) : [];
+  return hits
+    .filter((h) => h.score >= FOUND_MIN && h.score >= hits[0].score * 0.6)
+    .map((h) => {
+      const d = eyes.document(h.id);
+      const ex = d ? excerpts(d.text, text, FOUND_CHARS) : { text: h.snippet, whole: false };
+      return { id: h.id, name: h.name || (h.result && h.result.doc && h.result.doc.title) || '文件', ...ex };
+    });
+}
+
+function momPrompt(family, { hub, post, eyes } = {}, found = []) {
   const snap = family.snapshot();
   const { kidName: kid, girlInfo: g } = snap.profile;
   const today = snap.now.date;
@@ -505,7 +566,7 @@ function momPrompt(family, { hub, post, eyes } = {}) {
     `5. ${kid}和你的聊天不会保存，你不知道聊天原话；问到就说只记录做了什么事。`,
     `6. 说到${kid}时要友善，不夸大问题、不给孩子贴标签。`,
     '7. 只答应你做得到的事：你不会一直盯着孩子，也不会自己发现她什么时候练完琴、写完作业（要看就得让平板拍一张），所以别说“我会盯着她”。孩子说做完了、发了照片、让你传话，妈妈的页面会马上收到。',
-    '8. 妈妈问到文件里的内容、让你总结或分析文件：先调用 read_document（doc_id 见【最近的文件】，没说是哪个就用最新的），只依据读到的原文回答，原文里没有就直说；可以说在第几页、哪张表、第几张幻灯片。总结和分析先说结论，可以说得长一些，但不超过 200 字。文件里提到的日子和要做的事，妈妈想要的话可以用 add_task 加成任务。',
+    '8. 妈妈问到文件里的内容：【可能和妈妈这句话有关的文件原文】里有答案就依据它回答；没有、不够，或者要总结、分析整个文件，先调用 read_document（doc_id 见【最近的文件】，没说是哪个就用最新的；不在【最近的文件】里、或者不知道是哪个，先用 search_files 在所有文件里找）。只依据读到的原文回答，原文里没有就直说，别把文件里的一般安排说成沫沫自己的情况（比如有项目表不等于沫沫报了名），也别凭文件猜沫沫学得怎么样；可以说在第几页、哪张表、第几张幻灯片。总结和分析先说结论，可以说得长一些，但不超过 200 字。文件里提到的日子和要做的事，妈妈想要的话可以用 add_task 加成任务。所有发来的文件都一直存在服务器上，你随时可以翻。',
     '',
     '【资料】',
     `现在：${dateZh(today)} ${snap.now.time}。平板${hub && hub.size ? '开着' : '现在没打开'}。安静时间 ${quiet.start}–${quiet.end}。`,
@@ -522,6 +583,8 @@ function momPrompt(family, { hub, post, eyes } = {}) {
       const gist = (d.result.doc && d.result.doc.gist) || d.result.summary || '';
       return `[doc=${d.id}] ${when(family, d.at)} ${d.who === 'kid' ? kid : '妈妈'}发来的${TYPE_ZH[d.type] || ''}文件《${d.name || (d.result.doc && d.result.doc.title) || '文件'}》${size}：${gist}`;
     }),
+    found.length ? '【可能和妈妈这句话有关的文件原文】（按她的话在所有文件里自动找的，不一定有关：有关就依据它回答，说清是哪个文件；无关就别提）' : '',
+    ...found.map((x) => `[doc=${x.id}]《${x.name}》${x.whole ? '的全文' : '里最有关的部分（不是全文）'}：\n${x.text}`),
     '',
     `可以查看的：${Object.entries(CHECK_WHAT).map(([k, v]) => `${k}=${v}`).join('，')}`,
   ]
@@ -541,6 +604,7 @@ function routerPrompt(family, snap) {
     '- 问今天或明天的课，不调用工具，资料里已经有了。问其他日子（后天、下周一、11月3日等）的课，调用 get_day，把日期换算成 YYYY-MM-DD。',
     '- 说今天某件任务做完了，调用 mark_task_done，task_id 用资料里的 id。说全都做完了，就对每件还没做的任务各调用一次。',
     '- 说现在开始做某件任务（“我开始写作业了”“我去练琴啦”），调用 start_task。',
+    '- 问到以前发过的文件、书、故事、课件、通知里的内容（“我上次发给你的故事里小狐狸叫什么”“运动会通知说要带什么”），调用 look_up_files。',
     '- 让你在某个时间叫 TA、提醒 TA，调用 set_alarm。',
     '- 说取消闹钟，调用 cancel_alarms。',
     '- 小朋友明确说“告诉妈妈”“跟妈妈说”“转告妈妈”时，调用 tell_mom，text 照抄 TA 要说的话（“我”就是小朋友自己）。问作业、问问题都不是转告。',

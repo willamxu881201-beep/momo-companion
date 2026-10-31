@@ -86,6 +86,27 @@ async function ask(page, text) {
   await mom.screenshot({ path: `${OUT}/2_mom_card.png` });
   await mom.tap('#docClose');
 
+  // The library: every file, found by what is in it; any kind of file is kept.
+  await mom.tap('#adminBtn');
+  await mom.tap('button[data-tab="files"]');
+  await mom.waitForFunction(() => document.querySelectorAll('#fileList li').length >= 3, null, { timeout: 10000 });
+  await mom.fill('#fileQuery', '接力赛');
+  await mom.press('#fileQuery', 'Enter');
+  await mom.waitForFunction(() => /找到/.test(document.getElementById('fileStats').textContent), null, { timeout: 10000 });
+  const first = await mom.textContent('#fileList li .grow');
+  expect(/notice\.docx/.test(first), `管理 → 文件 finds the notice by what is in it: ${first.slice(0, 60)}`);
+  await mom.screenshot({ path: `${OUT}/2_mom_library.png` });
+  await mom.tap('#adminClose');
+  // Any file at all is kept, even one she can't read: here, a recording.
+  // (an ASCII name: Playwright's file chooser loses files with Chinese paths)
+  require('node:fs').writeFileSync(`${OUT}/piano-lesson.m4a`, Buffer.concat([Buffer.from([0, 0, 0, 32]), Buffer.from('ftypM4A '), Buffer.alloc(4000, 7)]));
+  const song = await send(mom, path.relative(FIXTURES, `${OUT}/piano-lesson.m4a`));
+  log(`any file: ${song}`);
+  expect(/^收到《piano-lesson.m4a》，我帮你存好了。不过它是(音频|视频)，我还读不了。$/.test(song), 'a file of any kind is kept');
+  const where = await ask(mom, '我发过的文件里，哪个提到了接力赛？几点？');
+  log(`looked it up: ${where}`);
+  expect(/运动会/.test(where) && /14[:：]00|下午\s*(两|2)\s*点/.test(where), 'she finds it in the files herself');
+
   // 3. MoMo's slides.
   const kidCtx = await browser.newContext({ viewport: { width: 1065, height: 624 }, isMobile: true, hasTouch: true });
   await kidCtx.addInitScript(...voiceStub(800));
@@ -102,6 +123,9 @@ async function ask(page, text) {
   log(`kid asked: ${numerator}`);
   expect(/上面|上边|上方/.test(numerator), 'answered from the slides');
   await kid.screenshot({ path: `${OUT}/3_kid_slides.png` });
+  const cake = await ask(kid, '我发给你的课件里，蛋糕要平均分成几份呀？');
+  log(`kid looked it up: ${cake}`);
+  expect(/4|四/.test(cake), 'MoMo gets an answer from her slides');
   const summary = await ask(mom, '总结一下沫沫刚发的课件');
   log(`summary: ${summary}`);
   expect(/分数/.test(summary), "Mom gets a summary of MoMo's slides");

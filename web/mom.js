@@ -6,9 +6,9 @@
 // photos and documents. The old settings live in the 管理 sheet (admin.js).
 
 import {
-  $, api, app, pick, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, stopSpeaking, wakeUp,
+  $, api, app, busyLabel, pick, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, stopSpeaking, wakeUp,
 } from './companion.js';
-import { initAdmin, refreshAdmin, renderAdmin } from './admin.js';
+import { initAdmin, refreshAdmin, refreshFiles, renderAdmin } from './admin.js';
 
 app.send = send;
 app.onLocked = showLogin;
@@ -53,7 +53,7 @@ function tabletLine(kid, parent) {
 }
 const KIND_ICON = {
   done: '✅', review: '👍', reminder: '⏰', alarm: '⏰', photo: '🖼️', timetable: '🗓️', homework_list: '📝',
-  homework_page: '📖', check: '📷', message: '💬', task: '➕', undo: '↩️', document: '📄',
+  homework_page: '📖', check: '📷', message: '💬', task: '➕', undo: '↩️', document: '📄', file: '📁',
 };
 const hhmm = (ms) => new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
@@ -122,7 +122,7 @@ function renderFeed() {
             el('span', { class: 'when' }, hhmm(e.at)),
             el('span', { class: 'what' }, `${KIND_ICON[e.kind] || '·'} ${e.text}`),
             e.doc
-              ? el('button', { class: 'thumb doc', type: 'button', onclick: () => showDoc(e), 'aria-label': '看文件' }, '📄')
+              ? el('button', { class: 'thumb doc', type: 'button', onclick: () => showFile(e.fileId), 'aria-label': '看文件' }, e.kind === 'file' ? '📁' : '📄')
               : e.fileId ? el('button', { class: 'thumb', type: 'button', onclick: () => showPhoto(e), 'aria-label': '看照片' }, el('img', { src: `/api/parent/files/${e.fileId}`, alt: '', loading: 'lazy' })) : null,
             e.undo ? el('button', { class: 'undo', type: 'button', onclick: () => undo(e) }, '撤销') : null,
           ))
@@ -138,22 +138,33 @@ function showPhoto(e) {
 $('photoClose').addEventListener('click', () => ($('photo').hidden = true));
 $('photo').addEventListener('click', (e) => e.target === $('photo') && ($('photo').hidden = true));
 
-// A document's card: what the companion made of it, and the file itself to save.
+// A file's card: what the companion made of it, how far reading it got, whether she may
+// talk about it with MoMo, and the file itself to save. Photos open as photos.
+const READ_ZH = { reading: '正在读', stored: '存着，读不了', failed: '这次没读成' };
 let shownDoc = null;
-async function showDoc(e) {
+async function showFile(id) {
   let d;
   try {
-    d = await api(`/api/parent/docs/${e.fileId}`);
+    d = await api(`/api/parent/docs/${id}`);
   } catch (err) {
     if (err.message !== 'locked') say(`没打开：${err.message}`, { mood: 'worried' });
+    return;
+  }
+  if (d.kind === 'photo' && d.status === 'read') {
+    showPhoto({ fileId: d.id, at: d.at, text: d.summary || d.name || '照片' });
     return;
   }
   shownDoc = d;
   const kid = app.state ? app.state.profile.kidName : '孩子';
   const doc = d.doc;
+  const day = new Date(d.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
   $('docTitle').textContent = doc ? doc.title : d.name || '文件';
-  $('docMeta').textContent = [`${hhmm(d.at)} ${d.who === 'kid' ? kid : '妈妈'}发来的${d.typeZh}文件`, d.name && `《${d.name}》`, d.size, d.cut && '很长，只读了一部分'].filter(Boolean).join(' · ');
+  $('docMeta').textContent = [`${day} ${hhmm(d.at)} ${d.who === 'kid' ? kid : '妈妈'}发来的${d.typeZh || ''}文件`, d.name && `《${d.name}》`, d.size, sizeZh(d.bytes), READ_ZH[d.status], d.cut && '太长，只存下了前面一大半'].filter(Boolean).join(' · ');
   $('docGist').textContent = doc ? doc.gist : d.summary;
+  $('docShare').checked = d.shared;
+  $('docShare').disabled = d.who === 'kid';
+  $('docShareRow').hidden = d.status !== 'read';
+  $('docReread').hidden = !['failed', 'stored'].includes(d.status);
   const list = (title, items) => (items.length ? [el('h3', {}, title), el('ul', {}, ...items.map((x) => el('li', {}, x)))] : []);
   $('docMore').replaceChildren(
     ...(doc
@@ -167,6 +178,36 @@ async function showDoc(e) {
   $('docSave').href = `/api/parent/files/${d.id}?download=1`;
   $('docSheet').hidden = false;
 }
+const sizeZh = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+$('docShare').addEventListener('change', async () => {
+  try {
+    shownDoc = await api(`/api/parent/files/${shownDoc.id}/share`, { kid: $('docShare').checked });
+  } catch (err) {
+    $('docShare').checked = !$('docShare').checked;
+    if (err.message !== 'locked') say(`没改成：${err.message}`, { mood: 'worried' });
+  }
+});
+$('docDelete').addEventListener('click', async () => {
+  if (!confirm(`删除《${shownDoc.name || '这个文件'}》？删除以后伙伴就读不到它了。`)) return;
+  try {
+    await api(`/api/parent/files/${shownDoc.id}/delete`, {});
+    $('docSheet').hidden = true;
+    reload();
+    refreshFiles();
+    say('好的，删掉了。', { mood: 'happy' });
+  } catch (err) {
+    if (err.message !== 'locked') say(`没删成：${err.message}`, { mood: 'worried' });
+  }
+});
+$('docReread').addEventListener('click', async () => {
+  try {
+    await api(`/api/parent/files/${shownDoc.id}/reread`, {});
+    $('docSheet').hidden = true;
+    say('好，我再读一次，读完告诉你。', { mood: 'happy' });
+  } catch (err) {
+    if (err.message !== 'locked') say(`哎呀，${err.message}。`, { mood: 'worried' });
+  }
+});
 $('docClose').addEventListener('click', () => ($('docSheet').hidden = true));
 $('docSheet').addEventListener('click', (e) => e.target === $('docSheet') && ($('docSheet').hidden = true));
 // Ask about it: the question box opens with the document's name already in it.
@@ -293,12 +334,13 @@ $('photoInput').addEventListener('change', async () => {
   $('photoInput').value = '';
   if (!file) return;
   stopSpeaking();
-  setBusy(true, file.type.startsWith('image/') ? '看一看…' : '读一读…');
+  const reading = file.type.startsWith('image/') ? '看一看…' : '读一读…';
+  setBusy(true, reading);
   try {
-    const r = await sendFile(file);
+    const r = await sendFile(file, (k) => busyLabel(k < 1 ? `发送 ${Math.round(k * 100)}%` : reading));
     setBusy(false);
     reload();
-    await say(r.line, { mood: 'happy' });
+    await say(r.line, { mood: r.kind === 'stored' || r.kind === 'failed' ? null : 'happy' });
   } catch (err) {
     setBusy(false);
     if (err.message !== 'locked') await say(`哎呀，${err.message}。`, { mood: 'worried' });
@@ -348,6 +390,11 @@ async function handle(ev) {
     reload();
     return say(ev.line, { mood: 'happy' });
   }
+  // A file she has finished reading (it took a while), and the like.
+  if (ev.type === 'say') {
+    reload();
+    return say(ev.line, { mood: ev.mood || null });
+  }
 }
 
 // ---- login, start ----------------------------------------------------------------
@@ -388,7 +435,7 @@ $('logout').addEventListener('click', async () => {
   location.reload();
 });
 
-initAdmin({ saved: (s) => (mom = s) });
+initAdmin({ saved: (s) => (mom = s), openFile: showFile });
 
 document.addEventListener('visibilitychange', () => {
   if (!app.started) return;

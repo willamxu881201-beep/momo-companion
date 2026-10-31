@@ -115,3 +115,117 @@ test("a sheet's later pieces start with its header row", () => {
   assert.match(found, /^（工作表：成绩）姓名 \| 语文 \| 数学\n/);
   assert.match(found, /学生257 \| 76 \| 86/);
 });
+
+// A little zip, for e-books made up on the spot.
+function zipOf(files) {
+  const { deflateRawSync, crc32 } = require_zlib;
+  const local = [];
+  const central = [];
+  let at = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const data = Buffer.from(text);
+    const stored = name === 'mimetype';
+    const packed = stored ? data : deflateRawSync(data);
+    const head = Buffer.alloc(30);
+    head.writeUInt32LE(0x04034b50, 0);
+    head.writeUInt16LE(stored ? 0 : 8, 8);
+    head.writeUInt32LE(crc32(data), 14);
+    head.writeUInt32LE(packed.length, 18);
+    head.writeUInt32LE(data.length, 22);
+    head.writeUInt16LE(Buffer.byteLength(name), 26);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt16LE(stored ? 0 : 8, 10);
+    entry.writeUInt32LE(crc32(data), 16);
+    entry.writeUInt32LE(packed.length, 20);
+    entry.writeUInt32LE(data.length, 24);
+    entry.writeUInt16LE(Buffer.byteLength(name), 28);
+    entry.writeUInt32LE(at, 42);
+    local.push(head, Buffer.from(name), packed);
+    central.push(entry, Buffer.from(name));
+    at += 30 + Buffer.byteLength(name) + packed.length;
+  }
+  const dir = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(files).length, 8);
+  end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(dir.length, 12);
+  end.writeUInt32LE(at, 16);
+  return Buffer.concat([...local, dir, end]);
+}
+const require_zlib = await import('node:zlib');
+
+test('web pages, e-books, OpenDocument and any text are read; what is not read is named roughly', async (t) => {
+  const page = Buffer.from('<!doctype html><html><head><style>p{}</style><script>var x=1</script></head><body><h1>春游通知</h1><p>11月8日去植物园，&nbsp;带水和帽子。</p><table><tr><td>集合</td><td>7:30</td></tr></table></body></html>');
+  const html = await read_(page, '通知.htm');
+  assert.equal(html.kind.type, 'html');
+  assert.equal(html.text, '春游通知\n11月8日去植物园， 带水和帽子。\n集合 | 7:30');
+
+  const book = zipOf({
+    mimetype: 'application/epub+zip',
+    'META-INF/container.xml': '<container><rootfiles><rootfile full-path="OEBPS/book.opf"/></rootfiles></container>',
+    'OEBPS/book.opf': '<package><manifest><item id="c2" href="two.xhtml"/><item id="c1" href="one.xhtml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>',
+    'OEBPS/one.xhtml': '<html><body><h2>第一章</h2><p>小狐狸叫阿橙。</p></body></html>',
+    'OEBPS/two.xhtml': '<html><body><h2>第二章</h2><p>阿橙学会了游泳。</p></body></html>',
+  });
+  const epub = await read_(book, 'story.epub');
+  assert.equal(epub.kind.type, 'epub');
+  assert.equal(epub.text, '【第1章】\n第一章\n小狐狸叫阿橙。\n【第2章】\n第二章\n阿橙学会了游泳。');
+
+  const subs = await read_(Buffer.from('1\n00:00:01,000 --> 00:00:03,000\n你好，沫沫\n'), '动画片.srt');
+  assert.equal(subs.kind.type, 'text', 'text, whatever its name');
+
+  const { roughly } = await import('../server/extract.js');
+  assert.equal(roughly(Buffer.concat([Buffer.from('ID3'), Buffer.alloc(20)]), 'song.mp3'), '音频');
+  assert.equal(roughly(Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom'), Buffer.alloc(20)]), 'clip.mp4'), '视频');
+  assert.equal(roughly(Buffer.from('Rar!\x1a\x07\x00'), 'a.rar'), '压缩包');
+  assert.equal(roughly(Buffer.from([1, 2, 3]), 'x.bin'), '文件');
+
+  if (!installed('soffice')) return t.skip('LibreOffice is not installed here (OpenDocument)');
+  const odt = await read('notice.odt');
+  assert.equal(odt.kind.type, 'odt');
+  assert.match(odt.text, /^关于举行秋季运动会的通知\n/);
+});
+
+async function read_(buf, name) {
+  const kind = detect(buf, name);
+  assert.ok(kind, `${name} is recognised`);
+  return { kind, ...(await extract(buf, kind)) };
+}
+
+test('a long document is read all through: notes on every section, then the whole from them', async () => {
+  const { readDocument } = await import('../server/docs.js');
+  const text = Array.from({ length: 6 }, (_, i) => `【第${i + 1}页】\n${`第${i + 1}页的内容。`.repeat(1200)}`).join('\n');
+  const calls = [];
+  const chat = async ({ model, messages, json }) => {
+    calls.push({ model, json: Boolean(json), text: messages[0].content });
+    if (!json) return { content: `要点${calls.length}` };
+    return { content: JSON.stringify({ kind: 'document', summary: '长文件', doc: { title: '一本长书', gist: '很长。', points: [], dates: [], todo: [] } }) };
+  };
+  const r = await readDocument({ apiKey: 'k', model: 'pro', noteModel: 'lite', text, name: '长书.pdf', today: '2026-10-28', tomorrow: '2026-10-29', chat });
+  const notes = calls.filter((c) => !c.json);
+  assert.ok(notes.length >= 4, `${notes.length} sections`);
+  assert.ok(notes.every((c) => c.model === 'lite'));
+  assert.match(notes[0].text, /^下面是一个长文件《长书.pdf》的第 1\/\d+ 部分/);
+  const last = calls.at(-1);
+  assert.equal(last.model, 'pro');
+  assert.match(last.text, /【每一部分的要点】\n第 1 部分：要点\d+\n第 2 部分：/);
+  assert.equal(r.sections, notes.length);
+  assert.equal(r.doc.title, '一本长书');
+});
+
+test('searching all the files: the one that holds the words, with the bit around them', async () => {
+  const { searchFiles } = await import('../server/docs.js');
+  const story = fixture('story.txt').toString('utf8');
+  const texts = { 1: story, 2: '关于举行秋季运动会的通知\n当天穿运动服和运动鞋。\n接力赛 | 14:00 | 跑道', 3: '数学练习\n6箱粉笔，每箱48盒。' };
+  const files = [1, 2, 3].map((id) => ({ id, name: { 1: '故事.txt', 2: '通知.docx', 3: '练习.pdf' }[id], result: null }));
+  const index = new Map();
+  const hits = searchFiles(files, '松鼠把松果藏在哪里', { index, textOf: (id) => texts[id] });
+  assert.equal(hits[0].id, 1);
+  assert.match(hits[0].snippet, /松果/);
+  assert.equal(searchFiles(files, '接力赛几点', { index, textOf: (id) => texts[id] })[0].id, 2);
+  assert.equal(searchFiles(files, '通知', { index, textOf: (id) => texts[id] })[0].id, 2, 'by its name too');
+  assert.deepEqual(searchFiles(files, '恐龙', { index, textOf: (id) => texts[id] }), []);
+  assert.equal(index.size, 3, 'each file cut up once');
+});

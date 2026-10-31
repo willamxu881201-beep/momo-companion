@@ -1,7 +1,8 @@
 // What a document says, as text: Word, Excel and PowerPoint files (.docx, .xlsx and
 // .pptx are read here, straight from their zipped XML; the older .doc/.xls/.ppt, WPS's
-// own files and RTF are first turned into those by LibreOffice), PDFs (poppler's
-// pdftotext), and plain text or CSV (UTF-8, or the GBK a Chinese Windows saves). The text comes in parts —
+// own files, OpenDocument files and RTF are first turned into those by LibreOffice),
+// PDFs (poppler's pdftotext), e-books (EPUB), web pages, and any plain text or CSV
+// (UTF-8, or the GBK a Chinese Windows saves), whatever its name. The text comes in parts —
 // pages, sheets, slides — each starting with a line like 【第2页】, so an answer can
 // say where something is. A document that is mostly pictures (a scan, screenshots
 // pasted into Word) has little text: its pictures come back too, to be read as such.
@@ -27,9 +28,17 @@ export const DOC_MIME = {
   rtf: 'application/rtf',
   text: 'text/plain',
   csv: 'text/csv',
+  html: 'text/html',
+  epub: 'application/epub+zip',
+  odt: 'application/vnd.oasis.opendocument.text',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  odp: 'application/vnd.oasis.opendocument.presentation',
 };
-export const TYPE_ZH = { pdf: 'PDF', docx: 'Word', doc: 'Word', rtf: 'Word', xlsx: 'Excel', xls: 'Excel', csv: 'Excel', pptx: 'PPT', ppt: 'PPT', text: '文本' };
-export const PART_ZH = { pdf: '页', xlsx: '张表', xls: '张表', pptx: '张幻灯片', ppt: '张幻灯片' };
+export const TYPE_ZH = {
+  pdf: 'PDF', docx: 'Word', doc: 'Word', rtf: 'Word', odt: 'Word', xlsx: 'Excel', xls: 'Excel', ods: 'Excel', csv: 'Excel',
+  pptx: 'PPT', ppt: 'PPT', odp: 'PPT', text: '文本', html: '网页', epub: '电子书',
+};
+export const PART_ZH = { pdf: '页', xlsx: '张表', xls: '张表', ods: '张表', pptx: '张幻灯片', ppt: '张幻灯片', odp: '张幻灯片', epub: '章' };
 
 const BY_EXT = {
   pdf: 'pdf',
@@ -42,6 +51,7 @@ const BY_EXT = {
   rtf: 'rtf',
   txt: 'text', text: 'text', md: 'text', markdown: 'text', log: 'text', json: 'text',
   csv: 'csv', tsv: 'csv',
+  html: 'html', htm: 'html', xhtml: 'html', mht: 'html',
 };
 const BY_MIME = {
   'application/msword': 'doc', 'application/vnd.ms-excel': 'xls', 'application/vnd.ms-powerpoint': 'ppt',
@@ -57,6 +67,9 @@ export function detect(buf, name = '', mime = '') {
   if (sig('\xff\xd8\xff')) return { type: 'image', mime: 'image/jpeg' };
   if (sig('\x89PNG')) return { type: 'image', mime: 'image/png' };
   if (sig('RIFF') && sig('WEBP', 8)) return { type: 'image', mime: 'image/webp' };
+  if (sig('GIF8')) return { type: 'image', mime: 'image/gif' };
+  if (sig('BM') && buf.length > 54 && buf.readUInt32LE(2) === buf.length) return { type: 'image', mime: 'image/bmp' };
+  if (sig('ftyp', 4) && /^(heic|heix|mif1|msf1)$/.test(buf.toString('latin1', 8, 12))) return { type: 'image', mime: 'image/heic' };
   if (sig('%PDF-')) return { type: 'pdf', mime: DOC_MIME.pdf };
   if (sig('PK\x03\x04')) {
     let zip;
@@ -68,6 +81,9 @@ export function detect(buf, name = '', mime = '') {
     for (const [type, part] of [['docx', 'word/document.xml'], ['xlsx', 'xl/workbook.xml'], ['pptx', 'ppt/presentation.xml']]) {
       if (zip.has(part)) return { type, mime: DOC_MIME[type], zip };
     }
+    // OpenDocument and EPUB say what they are in a "mimetype" part.
+    const kind = zip.has('mimetype') ? String(zip.text('mimetype')).trim() : '';
+    for (const type of ['odt', 'ods', 'odp', 'epub']) if (kind === DOC_MIME[type]) return { type, mime: DOC_MIME[type], zip };
     return null;
   }
   if (sig('\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1')) {
@@ -78,9 +94,22 @@ export function detect(buf, name = '', mime = '') {
     return ['doc', 'xls', 'ppt'].includes(type) ? { type, mime: DOC_MIME[type] } : null;
   }
   if (sig('{\\rtf')) return { type: 'rtf', mime: DOC_MIME.rtf };
-  const type = BY_EXT[ext] || BY_MIME[mime] || (/^text\//.test(mime) ? 'text' : null);
-  if ((type === 'text' || type === 'csv') && looksLikeText(buf)) return { type, mime: DOC_MIME[type] };
-  return null;
+  // Anything else that is text — whatever its name says — is read as text.
+  if (!looksLikeText(buf)) return null;
+  const head = decodeText(buf.subarray(0, 2048)).trimStart().toLowerCase();
+  const type = BY_EXT[ext] === 'csv' || BY_MIME[mime] === 'csv' ? 'csv' : BY_EXT[ext] === 'html' || /^(<!doctype html|<html)/.test(head) ? 'html' : 'text';
+  return { type, mime: DOC_MIME[type] };
+}
+
+// What a file that can't be read is, roughly, for saying so: 音频, 视频, 压缩包, or 文件.
+export function roughly(buf, name = '', mime = '') {
+  const ext = (/\.([a-z0-9]{1,8})$/i.exec(String(name)) || [])[1]?.toLowerCase() || '';
+  const sig = (s, at = 0) => buf.length >= at + s.length && buf.toString('latin1', at, at + s.length) === s;
+  if (/^audio\//.test(mime) || /^(mp3|m4a|wav|aac|flac|ogg|amr|wma|opus)$/.test(ext) || sig('ID3') || sig('fLaC') || (sig('RIFF') && sig('WAVE', 8))) return '音频';
+  if (/^video\//.test(mime) || /^(mp4|mov|avi|mkv|wmv|flv|webm|3gp|m4v)$/.test(ext) || sig('\x1aE\xdf\xa3') || sig('ftyp', 4)) return '视频';
+  if (/^(zip|rar|7z|gz|tgz|tar|bz2|xz)$/.test(ext) || sig('PK\x03\x04') || sig('Rar!') || sig('7z\xbc\xaf') || sig('\x1f\x8b')) return '压缩包';
+  if (/^image\//.test(mime)) return '图片';
+  return '文件';
 }
 
 // The text of a document: { text, parts, pictures, cut }. parts: how many pages,
@@ -111,6 +140,21 @@ export async function extract(buf, kind, { run = execFile } = {}) {
       break;
     case 'ppt':
       r = pptx(unzip(await convert(run, buf, 'ppt', 'pptx')));
+      break;
+    case 'odt':
+      r = docx(unzip(await convert(run, buf, 'odt', 'docx')));
+      break;
+    case 'ods':
+      r = xlsx(unzip(await convert(run, buf, 'ods', 'xlsx')));
+      break;
+    case 'odp':
+      r = pptx(unzip(await convert(run, buf, 'odp', 'pptx')));
+      break;
+    case 'epub':
+      r = epub(kind.zip || unzip(buf));
+      break;
+    case 'html':
+      r = { text: htmlText(decodeText(buf)) };
       break;
     case 'csv': {
       const text = decodeText(buf);
@@ -554,6 +598,39 @@ function xlsx(zip) {
     lines.push(`【工作表：${attr(m[1], 'name') || n}】`, ...tableLines(sheetRows(xml, strings, looks, date1904)));
   }
   return { text: lines.join('\n'), parts: n, zip };
+}
+
+// A web page's words: no scripts, styles or tags; block ends become line breaks.
+export function htmlText(html) {
+  return decode(
+    String(html)
+      .replace(/<(script|style|noscript|svg|head)\b[\s\S]*?<\/\1>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|tr|h[1-6]|section|article|blockquote|pre|table|ul|ol)>/gi, '\n')
+      .replace(/<\/t[dh]>/gi, ' | ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' '),
+  )
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\| ?\n/g, '\n');
+}
+
+// An e-book: its chapters in reading order (the spine of its package file).
+function epub(zip) {
+  const container = zip.text('META-INF/container.xml') || '';
+  const opf = (/full-path="([^"]+)"/.exec(container) || [])[1];
+  const pkg = (opf && zip.text(opf)) || '';
+  const dir = opf ? posix.dirname(opf) : '';
+  const items = {};
+  for (const m of pkg.matchAll(/<item\b([^>]*)>/g)) items[attr(m[1], 'id')] = attr(m[1], 'href');
+  const order = [...pkg.matchAll(/<itemref\b([^>]*)>/g)].map((m) => items[attr(m[1], 'idref')]).filter(Boolean);
+  const chapters = (order.length ? order : zip.names().filter((n) => /\.x?html?$/i.test(n)).sort())
+    .map((href) => zip.text(order.length ? posix.normalize(posix.join(dir, decodeURIComponent(href))) : href))
+    .filter(Boolean)
+    .map((x) => htmlText(x).trim())
+    .filter(Boolean);
+  return { text: chapters.map((t, i) => `【第${i + 1}章】\n${t}`).join('\n'), parts: chapters.length, zip };
 }
 
 // The pictures inside an Office file, in the order they were put in.

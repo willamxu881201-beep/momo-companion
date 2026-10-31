@@ -45,8 +45,10 @@ function alertMsg(text) {
 
 // ---- render -------------------------------------------------------------------
 
-export function initAdmin({ saved = () => {} } = {}) {
+let openFile = () => {};
+export function initAdmin({ saved = () => {}, openFile: open = () => {} } = {}) {
   onSaved = saved;
+  openFile = open;
 }
 
 export function renderAdmin(s) {
@@ -196,7 +198,50 @@ $('tabs').addEventListener('click', (e) => {
   if (!b) return;
   for (const x of $('tabs').querySelectorAll('button')) x.setAttribute('aria-selected', String(x === b));
   for (const t of document.querySelectorAll('#admin .tab')) t.hidden = t.id !== `tab-${b.dataset.tab}`;
+  if (b.dataset.tab === 'files') refreshFiles();
 });
+
+// ---- all the files ------------------------------------------------------------------
+// Everything people sent, newest first (30 at a time), or what matches a search.
+
+const FILE_ICON = { photo: '🖼️', doc: '📄', file: '📁' };
+const STATUS_ZH = { reading: '正在读', stored: '存着，读不了', failed: '这次没读成' };
+const sizeZh = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+let library = { q: '', files: [], n: 0, bytes: 0 };
+
+export async function refreshFiles(more = false) {
+  if ($('tab-files').hidden && !more) return;
+  const q = $('fileQuery').value.trim();
+  try {
+    const r = await api(`/api/parent/library?q=${encodeURIComponent(q)}&offset=${more ? library.files.length : 0}`);
+    library = { q, files: more ? [...library.files, ...r.files] : r.files, n: r.n, bytes: r.bytes };
+  } catch (err) {
+    $('fileStats').textContent = err.message;
+    return;
+  }
+  const kid = (S && S.profile.kidName) || '孩子';
+  $('fileStats').textContent = `一共 ${library.n} 个文件，占用 ${sizeZh(library.bytes)}${library.q ? `；「${library.q}」找到 ${library.files.length} 个` : ''}`;
+  $('fileList').replaceChildren(
+    ...(library.files.length
+      ? library.files.map((f) => {
+          const day = new Date(f.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+          const meta = [`${day} ${f.who === 'kid' ? kid : '妈妈'}`, f.typeZh, f.size || sizeZh(f.bytes), STATUS_ZH[f.status], f.who === 'mom' && f.status === 'read' && (f.shared ? `${kid}也能问` : '只给妈妈')].filter(Boolean).join(' · ');
+          const about = f.snippet || (f.doc ? f.doc.gist : f.summary) || '';
+          return h('li', {},
+            h('span', { class: 'grow' }, `${FILE_ICON[f.kind] || '📁'} ${f.name || (f.doc && f.doc.title) || '没有名字的文件'}`, h('br'), h('small', { class: 'hint' }, meta), about ? h('br') : null, about ? h('small', {}, about) : null),
+            h('button', { class: 'small secondary', type: 'button', onclick: () => openFile(f.id) }, '打开'),
+          );
+        })
+      : [h('li', { class: 'empty' }, library.q ? '没找到' : '还没有文件')]),
+  );
+  $('fileMore').hidden = Boolean(library.q) || library.files.length >= library.n;
+}
+
+$('fileFind').addEventListener('submit', (e) => {
+  e.preventDefault();
+  refreshFiles();
+});
+$('fileMore').addEventListener('click', () => refreshFiles(true));
 
 $('cycleForm').addEventListener('submit', (e) => {
   e.preventDefault();

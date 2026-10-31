@@ -13,18 +13,26 @@
 //  - A check-in asks the tablet for a snapshot (and, for the piano, a few seconds of
 //    sound). The tablet says out loud that it is taking it. What the picture shows goes
 //    to Mom's page; a poor writing posture gets a gentle word to MoMo too.
-// Everything lands in the day's record. Photos are kept a week, documents a month (files.js).
+// Everything lands in the day's record. What people send is kept until Mom deletes it,
+// read or not; check-in snapshots go after a week (files.js).
 
 import { randomBytes } from 'node:crypto';
-import { DOC_DAYS, pdfPages } from './files.js';
+import { readFileSync } from 'node:fs';
+import { pdfPages } from './files.js';
 import { lookAt, readPicture, transcribe } from './vision.js';
-import { PART_ZH, TYPE_ZH, detect, extract, visible } from './extract.js';
-import { readDocument } from './docs.js';
+import { PART_ZH, TYPE_ZH, detect, extract, roughly, visible } from './extract.js';
+import { readDocument, searchFiles } from './docs.js';
 import { addDays, dateZh } from './dates.js';
 import { inQuiet } from './events.js';
 
 const HOMEWORK_TTL_MS = 3 * 3600000; // how long what MoMo just showed stays on the companion's mind
-const SCAN_PAGES = 9; // pages of a scanned PDF read, at most
+const SCAN_PAGES = 200; // pages of a scanned PDF read, at most
+const READ_MAX = 200 * 1024 * 1024; // bigger files are kept but not read
+
+// Mom's papers stay hers, unless they're about school: those the companion may use with
+// MoMo too. (Mom can change it on the file's card.)
+const SCHOOL = /通知|课件|作业|阅读|课程|课表|学习|练习|试卷|成绩|故事/;
+const forMoMo = (r) => r.kind !== 'document' || (SCHOOL.test(`${r.doc.type} ${r.doc.title}`) && !/工作/.test(r.doc.type));
 const CHECK_WAIT_MS = 60000;
 export const CHECK_WHAT = { look: '看看在做什么', piano: '看看在不在练琴', posture: '看看坐姿' };
 const CHECK_LINES = {
@@ -55,64 +63,103 @@ export class Eyes {
     Object.assign(this, { family, store, files, hub, momHub, config, read, readDoc, ocr, look, pdf, text });
     this.homework = null;
     this.checks = new Map();
+    this.reading = new Map(); // file id -> its reading, while it goes on
+    this.index = new Map(); // file id -> its pieces, for searching (docs.js)
   }
 
   kid() {
     return this.family.profile().kidName;
   }
 
-  // kind: 'vision' (photos, check-ins) or 'docs'. Counts one use, unless over the day's limit.
-  overLimit(kind = 'vision') {
+  // Check-ins: counts one, unless over the day's limit. (What people send has no limit.)
+  overLimit() {
     const today = this.family.now().date;
-    const limit = kind === 'docs' ? this.config.limits.docsPerDay ?? 30 : this.config.limits.visionPerDay;
-    if (this.store.usage(today, kind) >= limit) return true;
-    this.store.addUsage(today, kind);
+    if (this.store.usage(today, 'vision') >= this.config.limits.visionPerDay) return true;
+    this.store.addUsage(today, 'vision');
     return false;
   }
 
-  // ---- photos and documents ------------------------------------------------------
+  // ---- what people send ----------------------------------------------------------
 
-  // who: kid | mom. Returns what was seen, what changed, the event to undo it by, and
-  // a line for the companion to say.
-  async take({ who, mime = '', name = '', buf }) {
-    const kind = detect(buf, name, mime);
-    if (!kind) throw refuse(415, '这种文件我还看不懂，可以发照片、PDF、Word、Excel、PPT 或者文本文件');
-    return kind.type === 'image' ? this.takePicture({ who, mime: kind.mime, name, buf }) : this.takeDocument({ who, kind, name, buf });
+  // Reads a file just received (files.receive; who sent it is in its record) and acts
+  // on it. Resolves to what was made of it — what was seen, what changed, the event to
+  // undo it by — with a line for the companion to say. A file that can't be read is
+  // kept all the same, and the line says so.
+  take(fileId) {
+    const f = this.store.getFile(fileId);
+    const job = this.readNow(f).catch((err) => (err.status === 415 ? this.keep(f, err.message) : this.failed(f, err)));
+    this.reading.set(f.id, job);
+    job.finally(() => this.reading.delete(f.id));
+    return job;
   }
 
-  async takePicture({ who, mime, name, buf }) {
-    if (this.overLimit()) throw refuse(429, '今天看的照片太多啦，明天再发吧');
-    const fileId = this.files.save({ who, kind: 'photo', mime, name, buf });
-    const r = await this.readPictures([dataUrl(mime, buf)]);
-    this.store.setFileResult(fileId, r);
-    return this.act({ who, fileId, r });
-  }
-
-  async takeDocument({ who, kind, name, buf }) {
-    if (this.overLimit('docs')) throw refuse(429, '今天看的文件太多啦，明天再发吧');
+  async readNow(f) {
+    if (f.bytes > READ_MAX) return this.keep(f, '太大了，我还读不了');
+    const buf = readFileSync(this.files.pathOf(f));
+    const kind = detect(buf, f.name, f.mime);
+    if (!kind) return this.keep(f, `是${roughly(buf, f.name, f.mime)}，我还读不了`);
+    if (kind.type === 'image') {
+      this.store.setFileKind(f.id, 'photo', kind.mime);
+      return this.done(f, await this.readPictures([dataUrl(kind.mime, buf)]));
+    }
+    this.store.setFileKind(f.id, 'doc', kind.mime);
     let doc;
     try {
       doc = await this.text(buf, kind);
     } catch (err) {
-      console.error(`[eyes] could not read a ${kind.type}:`, err.message);
-      if (err.missing) throw refuse(415, kind.type === 'pdf' ? '服务器还不能读 PDF，请拍照或截图发过来' : '服务器还不能读这种旧格式的文件，请另存为 docx、xlsx、pptx 或 PDF 再发');
-      throw refuse(415, err.locked ? '这个文件有密码，打不开' : '这个文件打不开，可能已经坏了');
+      console.error(`[eyes] could not open a ${kind.type}:`, err.message);
+      return this.keep(f, err.missing ? '是服务器还读不了的格式' : err.locked ? '有密码，打不开' : '打不开，可能已经坏了');
     }
-    const fileId = this.files.save({ who, kind: 'doc', mime: kind.mime, name, buf, days: DOC_DAYS });
-    let r;
-    let ocred = 0;
-    try {
-      ({ r, ocred } = await this.readDocText({ kind, buf, doc, name }));
-    } catch (err) {
-      this.forget(fileId); // nothing was made of it: it isn't kept
-      if (err.status) throw err;
-      console.error('[eyes] reading a document failed:', err.message);
-      throw refuse(502, '我这会儿没读成这个文件，等一下再发一次吧');
-    }
+    const { r, ocred } = await this.readDocText({ kind, buf, doc, name: f.name });
     Object.assign(r, { type: kind.type, parts: ocred || doc.parts, cut: doc.cut || (ocred && doc.parts > ocred) || false });
-    this.store.setFileText(fileId, doc.text);
-    this.store.setFileResult(fileId, r);
-    return this.act({ who, fileId, r, name });
+    this.store.setFileText(f.id, doc.text);
+    this.index.delete(f.id);
+    return this.done(f, r);
+  }
+
+  done(f, r) {
+    this.store.setFileResult(f.id, r);
+    this.store.setFileStatus(f.id, 'read');
+    if (f.who === 'mom') this.store.setFileShared(f.id, forMoMo(r));
+    return this.act({ who: f.who, fileId: f.id, r, name: f.name });
+  }
+
+  // Kept, but not read: why, in a few words. It goes in the day's record all the same.
+  keep(f, why) {
+    why = String(why).replace(/^这个文件/, '');
+    if (f.kind !== 'doc') this.store.setFileKind(f.id, 'file');
+    this.store.setFileStatus(f.id, 'stored');
+    this.store.setFileResult(f.id, { kind: 'stored', summary: why });
+    const by = f.who === 'kid' ? this.kid() : '妈妈';
+    const named = f.name ? `《${f.name}》` : '一个文件';
+    this.family.log(f.who, 'file', `${by}发来${named}（${why}，先存着）`, { fileId: f.id });
+    return { fileId: f.id, kind: 'stored', summary: why, changes: [], undo: null, line: `收到${f.name ? named : '啦'}，我帮你存好了。不过它${why}。` };
+  }
+
+  // The models failed: kept, and Mom can have it read again (管理 → 文件).
+  failed(f, err) {
+    console.error('[eyes] reading a file failed:', err.message);
+    this.store.setFileStatus(f.id, 'failed');
+    this.store.setFileResult(f.id, { kind: 'failed', summary: '这次没读成' });
+    const by = f.who === 'kid' ? this.kid() : '妈妈';
+    this.family.log(f.who, 'file', `${by}发来${f.name ? `《${f.name}》` : '一个文件'}（这次没读成，先存着）`, { fileId: f.id });
+    return { fileId: f.id, kind: 'failed', summary: '这次没读成', changes: [], undo: null, line: '我这会儿没读成这个文件，先帮你存好了，等一下可以再让我读一次。' };
+  }
+
+  // A result that came after the upload was already answered: said on the page of
+  // whoever sent it.
+  tell(who, r) {
+    (who === 'kid' ? this.hub : this.momHub).send({ type: 'say', line: r.line, mood: r.kind === 'failed' || r.kind === 'stored' ? null : 'happy', fileId: r.fileId });
+  }
+
+  // Files that were being read when the server stopped (or Mom asks again): read now.
+  resume(ids = this.store.filesWithStatus('reading').map((f) => f.id)) {
+    for (const id of ids) {
+      const f = this.store.getFile(id);
+      if (!f || this.reading.has(id)) continue;
+      this.store.setFileStatus(id, 'reading');
+      this.take(id).then((r) => this.tell(f.who, r));
+    }
   }
 
   // What the models make of a document's text (doc.text is replaced by what is read off
@@ -121,8 +168,10 @@ export class Eyes {
     let r = null;
     let ocred = 0;
     // Hardly any text: a scan, or screenshots pasted into a document. Its pages are
-    // pictures, and a picture of a timetable or homework reads best as a picture.
-    if (visible(doc.text) < 40) {
+    // pictures, and a picture of a timetable or homework reads best as a picture. (A
+    // short note with no pictures is just short: it is read as it is.)
+    const had = visible(doc.text);
+    if (had < 40) {
       let images = [];
       try {
         images = kind.type === 'pdf'
@@ -131,26 +180,37 @@ export class Eyes {
       } catch (err) {
         console.error('[eyes] could not draw the pages:', err.message);
       }
-      if (!images.length) throw refuse(415, '这个文件里没有能读的文字');
-      if (images.length <= 2) {
+      if (!images.length && !had) throw refuse(415, '这个文件里面没有能读的文字');
+      if (images.length && images.length <= 2) {
         r = await this.readPictures(images);
         if (r.kind === 'other') r = null;
       }
-      if (!r) {
+      if (images.length && !r) {
         let failed = 0;
         const pages = await inTurns(images, 3, (image) => this.ocr({ apiKey: this.config.arkApiKey, model: this.config.visionModel, image }).catch(() => {
           failed += 1;
           return '';
         }));
         if (failed === pages.length) throw new Error('every page failed to be read');
-        doc.text = pages.map((t, i) => `【第${i + 1}页】\n${t}`).join('\n');
-        ocred = pages.length;
-        if (visible(doc.text) < 10) throw refuse(415, '这个文件里没有能读的文字');
+        const seen = pages.map((t, i) => `【第${i + 1}页】\n${t}`).join('\n');
+        if (visible(seen) > had) {
+          doc.text = seen;
+          ocred = pages.length;
+        } else if (!had) throw refuse(415, '这个文件里面没有能读的文字');
       }
     }
     if (!r) {
       const now = this.family.now();
-      r = await this.readDoc({ apiKey: this.config.arkApiKey, model: this.config.docModel || this.config.visionModel, text: doc.text, name, kidName: this.kid(), today: now.date, tomorrow: addDays(now.date, 1) });
+      r = await this.readDoc({
+        apiKey: this.config.arkApiKey,
+        model: this.config.docModel || this.config.visionModel,
+        noteModel: this.config.routerModel,
+        text: doc.text,
+        name,
+        kidName: this.kid(),
+        today: now.date,
+        tomorrow: addDays(now.date, 1),
+      });
     }
     return { r, ocred };
   }
@@ -158,11 +218,6 @@ export class Eyes {
   readPictures(images) {
     const now = this.family.now();
     return this.read({ apiKey: this.config.arkApiKey, model: this.config.visionModel, images, kidName: this.kid(), today: now.date, tomorrow: addDays(now.date, 1) });
-  }
-
-  // A file that turned out to have nothing in it to read is not kept.
-  forget(fileId) {
-    this.files.remove(fileId);
   }
 
   // Does what a photo or document asks for, records it, and says so.
@@ -232,7 +287,7 @@ export class Eyes {
         const size = r.parts > 1 && PART_ZH[r.type] ? `（${r.parts} ${PART_ZH[r.type]}）` : '';
         // A couple of dates are worth saying out loud; the rest are on the document's card.
         const dates = d.dates.length ? `里面的日子：${d.dates.slice(0, 2).map((x) => `${dateZh(x.date).replace(/ .*/, '')}${x.what}`).join('，')}${d.dates.length > 2 ? '，还有几个写在卡片上' : ''}。` : '';
-        const long = r.partial || r.cut ? '文件很长，我先看了开头和结尾，您问到哪儿我再翻原文。' : '';
+        const long = r.cut ? '文件太长了，我只存下了前面的一大半。' : r.sections > 1 ? `文件很长，我一段一段都读完了，问到哪儿我再翻原文。` : '';
         return `我看完了《${d.title}》${size}。${d.gist}${dates}${long}想知道里面的什么，直接问我。`;
       }
       default:
@@ -247,17 +302,30 @@ export class Eyes {
 
   // ---- documents, for answering from ---------------------------------------------
 
-  // Documents still kept, newest first: { id, at, who, name, type, parts, result }.
+  // Documents that were read, newest first: { id, at, who, name, type, parts, result }.
   // who: only those this person sent.
-  documents({ who = null, since = Date.now() - DOC_DAYS * 86400000, limit = 8 } = {}) {
-    return this.store.listDocs({ since, who, limit }).filter((d) => d.result).map((d) => ({ ...d, type: d.result.type, parts: d.result.parts }));
+  documents({ who = null, since = 0, limit = 8 } = {}) {
+    return this.store.listDocs({ since, who, limit }).filter((d) => d.result && d.result.type).map((d) => ({ ...d, type: d.result.type, parts: d.result.parts }));
   }
 
-  // One document with its text, or null when it is gone.
+  // One document with its text, or null when there is none (gone, or never read).
   document(id) {
     const f = this.store.getFile(Number(id));
-    if (!f || f.kind !== 'doc' || !f.result) return null;
-    return { id: f.id, at: f.at, who: f.who, name: f.name, type: f.result.type, parts: f.result.parts, result: f.result, text: this.store.getFileText(f.id) || '' };
+    if (!f || f.kind !== 'doc' || !f.result || !f.result.type) return null;
+    return { id: f.id, at: f.at, who: f.who, name: f.name, type: f.result.type, parts: f.result.parts, result: f.result, shared: Boolean(f.shared), text: this.store.getFileText(f.id) || '' };
+  }
+
+  // The documents that best match a question, best first: [{ id, name, who, at, result,
+  // score, where, snippet }]. forKid: only those the companion may use with MoMo.
+  search(query, { forKid = false, limit = 5 } = {}) {
+    const files = this.store.textFiles({ forKid });
+    const hits = searchFiles(files, query, { index: this.index, textOf: (id) => this.store.getFileText(id) || '', limit });
+    return hits.map((h) => ({ ...files.find((f) => f.id === h.id), ...h }));
+  }
+
+  // A file is gone, or read again: it is cut up afresh next time it is searched.
+  forgetText(id) {
+    this.index.delete(id);
   }
 
   // The document MoMo sent lately (not a timetable or homework: those are acted on), while fresh.

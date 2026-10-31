@@ -96,7 +96,7 @@
       <button id="mic" class="mic" type="button">按一下说话</button>
       <button id="photoBtn" class="ghost glass round" type="button" aria-label="发照片或文件：课程表、作业、通知、成绩单、课件">📎</button>
       <button id="kbd" class="ghost glass round" type="button">打字</button>
-      <input id="photoInput" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.wps,.et,.dps,.rtf,.txt,.md,.csv,application/pdf,application/msword,application/vnd.ms-excel,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv" hidden>
+      <input id="photoInput" type="file" hidden>
     </div>
   </div>
 </main>
@@ -115,9 +115,12 @@
     <p id="docMeta" class="meta"></p>
     <p id="docGist" class="gist"></p>
     <div id="docMore"></div>
+    <label id="docShareRow" class="share"><input id="docShare" type="checkbox"> 伙伴也可以跟沫沫聊这个文件</label>
     <div class="row">
       <a id="docSave" class="ghost" href="#" download>保存原文件</a>
       <button id="docAsk" class="ghost" type="button">问问伙伴</button>
+      <button id="docReread" class="ghost" type="button" hidden>再读一次</button>
+      <button id="docDelete" class="ghost" type="button">删除</button>
       <button id="docClose" type="button">关闭</button>
     </div>
   </div>
@@ -148,6 +151,7 @@
       <button type="button" data-tab="tasks">每天的任务</button>
       <button type="button" data-tab="companion">伙伴</button>
       <button type="button" data-tab="tablet">平板</button>
+      <button type="button" data-tab="files">文件</button>
       <button type="button" data-tab="today">好感度和用量</button>
     </nav>
 
@@ -273,6 +277,20 @@
       <div class="card">
         <h2>照片</h2>
         <p class="hint">发给伙伴的照片和平板拍的照片只存在自己的服务器上，7 天后自动删除；只有登录了家长密码才能看。平板拍照时，屏幕角上会显示摄像头画面，伙伴也会先说一声。</p>
+      </div>
+    </section>
+
+    <section id="tab-files" class="tab" hidden>
+      <div class="card">
+        <h2>所有文件</h2>
+        <p class="hint">沫沫和妈妈发给伙伴的照片和文件，不管什么格式、多大，都存在自己的服务器上，不会自动删除；伙伴随时可以翻出来读。妈妈的文件默认只在跟妈妈聊天时用，跟学校有关的（通知、课件、作业、成绩……）伙伴也会跟沫沫聊，每个文件都可以改。「看看沫沫」拍的照片 7 天后自动删除。</p>
+        <form id="fileFind" class="row">
+          <label class="grow">找文件 <input id="fileQuery" maxlength="60" placeholder="文件名或里面的内容，比如：运动会"></label>
+          <button type="submit">搜索</button>
+        </form>
+        <p id="fileStats" class="hint"></p>
+        <ul id="fileList" class="list files"></ul>
+        <button id="fileMore" type="button" class="secondary" hidden>再看更早的</button>
       </div>
     </section>
 

@@ -46,10 +46,11 @@ family.onEvent = (id) => {
 // The companion speaks up about the day's tasks on her own, in her own words.
 const coach = new Coach({ family, hub, momHub, say: (what) => brain.speakUp(what), note: (line) => brain.note('kid', line) });
 new Scheduler(family, hub, { coach, post, files }).start();
+eyes.resume(); // files that were still being read when the server last stopped
 
 const handler = createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, notify, coach, webDir: join(root, 'web') });
 const server = createServer(handler);
-server.requestTimeout = 180000; // a big document over a slow phone line
+server.requestTimeout = 30 * 60000; // a big file over a slow phone line
 server.listen(config.port, config.host, () => {
   const missing = [
     !config.arkApiKey && 'ARK_API_KEY',

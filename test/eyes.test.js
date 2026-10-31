@@ -29,7 +29,7 @@ store.setSetting('cycle', { anchorDate: '2026-10-26', anchorDay: 1 });
 store.setCourses(1, [{ name: '数学' }]);
 const family = new Family(store, { clock: () => at });
 const auth = new Auth(store, { parentPassword: 'test-password' });
-const config = { publicUrl: '', parentPassword: 'test-password', arkApiKey: 'k', visionModel: 'v', limits: { chatPerDay: 80, asrPerDay: 150, ttsCharsPerDay: 20000, visionPerDay: 60, momChatPerDay: 80 } };
+const config = { publicUrl: '', parentPassword: 'test-password', arkApiKey: 'k', visionModel: 'v', retryMs: 0, limits: { chatPerDay: 80, asrPerDay: 150, ttsCharsPerDay: 20000, visionPerDay: 60, momChatPerDay: 80 } };
 
 // Pages that are "open": each records what was pushed to it.
 const fakeHub = () => ({ size: 1, got: [], send(e) { this.got.push(e); } });
@@ -44,6 +44,7 @@ let reading = null;
 let readArgs = null;
 let ocrCalls = 0;
 let slow = 0; // ms the document model takes
+let hiccups = 0; // times the document model fails before it works
 const files = new Files(store, dataDir);
 const eyes = new Eyes({
   family, store, files, hub, momHub, config,
@@ -52,6 +53,10 @@ const eyes = new Eyes({
   readDoc: async (args) => {
     readArgs = args;
     if (slow) await new Promise((r) => setTimeout(r, slow));
+    if (hiccups > 0) {
+      hiccups -= 1;
+      throw new Error('a hiccup');
+    }
     if (reading instanceof Error) throw reading;
     return structuredClone(reading);
   },
@@ -368,7 +373,13 @@ test("any file is kept: one with nothing to read, one she can't read, one the mo
   assert.match(song.line, /存好了。不过它是音频，我还读不了。/);
   const feed = (await (await mom.get('/api/parent/feed')).json()).events;
   assert.ok(feed.some((e) => e.kind === 'file' && e.text === 'MoMo发来《小星星.mp3》（是音频，我还读不了，先存着）'));
-  // The model failing: kept too, marked to be read again.
+  // The model failing once: tried again, and read.
+  reading = { ...notice, doc: { ...notice.doc, title: '一首小诗', gist: '一首写秋天的小诗。', dates: [], type: '阅读材料' } };
+  hiccups = 1;
+  const poem = await (await mom.post('/api/upload?name=poem.txt', Buffer.from('秋天到了，树叶黄了，一片片落下来。'), 'text/plain')).json();
+  assert.match(poem.line, /^我看完了《一首小诗》/);
+  assert.equal(hiccups, 0);
+  // The model down: kept too, marked to be read again.
   reading = new Error('the model is down');
   const failed = await (await mom.post('/api/upload?name=story.txt', fixture('story.txt'), 'text/plain')).json();
   assert.equal(failed.line, '我这会儿没读成这个文件，先帮你存好了，等一下可以再让我读一次。');

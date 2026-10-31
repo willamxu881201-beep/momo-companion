@@ -28,6 +28,7 @@ import { inQuiet } from './events.js';
 const HOMEWORK_TTL_MS = 3 * 3600000; // how long what MoMo just showed stays on the companion's mind
 const SCAN_PAGES = 200; // pages of a scanned PDF read, at most
 const READ_MAX = 200 * 1024 * 1024; // bigger files are kept but not read
+const RETRY_MS = 3000; // a reading that failed is tried once more after this
 
 // What Mom sends is for MoMo to see too (on her page, and to ask the companion about),
 // unless it looks like Mom's own papers: her work, bills, contracts, papers about money
@@ -95,7 +96,13 @@ export class Eyes {
   // kept all the same, and the line says so.
   take(fileId) {
     const f = this.store.getFile(fileId);
-    const job = this.readNow(f).catch((err) => (err.status === 415 ? this.keep(f, err.message) : this.failed(f, err)));
+    // The models fail now and then: one more try a moment later, before giving up.
+    const again = (err) => {
+      if (err.status === 415) throw err;
+      console.error('[eyes] reading a file failed, trying once more:', err.message);
+      return new Promise((r) => setTimeout(r, this.config.retryMs ?? RETRY_MS)).then(() => this.readNow(f));
+    };
+    const job = this.readNow(f).catch(again).catch((err) => (err.status === 415 ? this.keep(f, err.message) : this.failed(f, err)));
     this.reading.set(f.id, job);
     job.finally(() => this.reading.delete(f.id));
     return job;

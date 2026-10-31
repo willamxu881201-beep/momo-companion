@@ -97,11 +97,14 @@ systemctl enable momo >/dev/null
 systemctl restart momo
 
 echo "== 5/5 网页和 HTTPS 证书（Caddy）"
-sed "s/{{DOMAIN}}/$DOMAIN/g" "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
-systemctl reload caddy
+# 只写 /etc/caddy/sites/momo.caddy；主文件 /etc/caddy/Caddyfile 和别的网站的文件不动
+# （约定和例外见 caddy-site.sh 开头）。
+PORT=$(sed -n 's/^PORT=\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$ENV_FILE" | tail -n 1)
+PORT=${PORT:-8080}
+bash "$APP_DIR/deploy/caddy-site.sh" "$DOMAIN" "$PORT"
 
 sleep 2
-if curl -fsS http://127.0.0.1:8080/healthz >/dev/null; then
+if curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null; then
   echo
   echo "装好了。"
   echo "家长后台：https://$DOMAIN/parent"

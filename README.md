@@ -64,6 +64,8 @@ git clone https://github.com/willamxu881201-beep/momo-companion /opt/momo-compan
 bash /opt/momo-companion/deploy/install.sh 101-47-157-111.sslip.io
 ```
 
+脚本只管 MoMo 自己的网站配置 `/etc/caddy/sites/momo.caddy`，不会改别的网站（见下面「和别的网站共用这台服务器」）。
+
 **4. 填密码和 Key**
 
 ```bash
@@ -88,6 +90,25 @@ systemctl restart momo
 - 用 Chrome 打开，菜单里「添加到主屏幕」，以后像 App 一样全屏打开。
 - 第一次说话时允许使用麦克风；妈妈第一次要「看看沫沫」时，平板会问能不能用摄像头，点允许。
 - 平板接上充电，页面开着就会到点提醒。
+
+## 和别的网站共用这台服务器
+
+服务器上的 Caddy 按这个约定放配置，谁部署都不会冲掉别人的：
+
+- `/etc/caddy/Caddyfile` 只放全局设置和一行 `import /etc/caddy/sites/*.caddy`。
+- 每个网站在 `/etc/caddy/sites/` 下各管自己的一个文件：MoMo 用 `momo.caddy`（安装脚本每次都会重写它，不要手动改），别的工具用自己的，比如 `dwdm-magic.caddy`。
+
+安装脚本只写 `momo.caddy`。主文件只在两种情况下才动，并且先备份成 `Caddyfile.bak-momo-日期`：缺 `import` 那行时补上；里面还留着旧版安装脚本写进去的 MoMo 那一段时删掉那一段（不然同一个域名出现两次，Caddy 会拒绝）。改完先用 Caddy 检查整份配置（连同别的网站的文件），通过了才重新加载；不通过就把这次动过的文件恢复原样，正在运行的网站不受影响，并指出是哪个文件有问题。
+
+加一个网站：
+
+```bash
+nano /etc/caddy/sites/你的工具.caddy        # 例如：tool.example.com { reverse_proxy 127.0.0.1:9000 }
+caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+```
+
+- MoMo 在本机 `127.0.0.1:8080` 上运行，别的工具请用别的端口。要换 MoMo 的端口：改 `/etc/momo/momo.env` 里的 `PORT`，再运行一次安装脚本。
+- 80 和 443 由 Caddy 统一接收、按域名分给各个网站，证书各自自动申请。不要再装一个 nginx 去占 80/443。
 
 ## 手机推送（可选）
 
@@ -216,7 +237,7 @@ PARENT_PASSWORD=test ARK_API_KEY=… npm start   # 本地运行，打开 http://
 | `web/img/scene/` | 场景（庭院、云海、书房、琴房、运动馆、公园、卧室，各有白天和夜晚），`scenes.json` 记着手机竖屏时画面取哪一段 |
 | `web/img/pet/sprite/` | 宠物抠图（4 个进化阶段，各有平常、开心、睡觉三种样子） |
 | `web/img/`、`web/vid/` | 半身像（开始页和选伙伴时用）；早先的表情图和半身循环动画，留作备用 |
-| `deploy/` | 安装脚本、systemd 服务、Caddy 配置 |
+| `deploy/` | 安装脚本、systemd 服务；`momo.caddy` 是 MoMo 在 Caddy 里的网站，`caddy-site.sh` 只写这一个文件（约定见「和别的网站共用这台服务器」） |
 | `tools/browser/` | 浏览器检查（见上） |
 | `test/fixtures/` | 测试用的样例文件（编的学校通知、成绩单、课件等，`make.py` 生成） |
 | `design/` | 主界面的备选方案（庭院、书房、云海的场景图和抠图脚本），说明见 `design/README.md` |

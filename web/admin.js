@@ -176,6 +176,7 @@ function renderCompanion(s) {
   $('quietStart').value = s.quiet.start;
   $('quietEnd').value = s.quiet.end;
   $('followUp').checked = s.voice.followUp;
+  $('wakeOn').checked = s.voice.wake;
   $('voices').replaceChildren(h('legend', {}, '配音音色（豆包语音 2.0 的音色 ID）'), ...Object.entries(s.girls).map(([k, g]) => h('label', {}, g.name, h('input', { value: s.voices[k], 'data-girl': k, spellcheck: 'false' }))));
   $('ttsNote').textContent = s.tts ? '豆包配音已开启。' : '服务器还没配置豆包语音的 AppID 和 Token，现在用平板自带的声音说话。';
 }
@@ -312,7 +313,7 @@ $('companionForm').addEventListener('submit', (e) => {
       pets: [...$('hidePets').querySelectorAll('input:checked')].map((i) => i.value),
     },
     quiet: { start: $('quietStart').value, end: $('quietEnd').value },
-    voice: { followUp: $('followUp').checked },
+    voice: { followUp: $('followUp').checked, wake: $('wakeOn').checked },
     voices,
   }, $('companionMsg'));
 });

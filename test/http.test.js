@@ -195,13 +195,19 @@ test('the tablet is told where she is; MoMo can start a task, and choose where f
   at = new Date('2026-10-28T08:05:00Z');
 });
 
-test('连续对话 is on unless Mom turns it off, and both pages hear of it', async () => {
+test('连续对话 and 语音唤醒 are on unless Mom turns them off; the tablet is told the name to listen for', async () => {
   const { cookie: kid } = await openKidLink(auth.kidKey());
   const mom = { Cookie: `${PARENT_COOKIE}=${auth.login('127.0.0.1', 'test-password').token}`, 'Content-Type': 'application/json' };
-  assert.deepEqual((await (await get('/api/state', { Cookie: kid })).json()).voice, { followUp: true });
-  const off = await fetch(`${base}/api/parent/settings`, { method: 'POST', headers: mom, body: JSON.stringify({ voice: { followUp: false } }) });
-  assert.equal(off.status, 200);
-  assert.deepEqual((await (await get('/api/state', { Cookie: kid })).json()).voice, { followUp: false });
-  assert.deepEqual((await (await get('/api/parent/state', mom)).json()).voice, { followUp: false });
-  await fetch(`${base}/api/parent/settings`, { method: 'POST', headers: mom, body: JSON.stringify({ voice: { followUp: true } }) });
+  const state = () => get('/api/state', { Cookie: kid }).then((r) => r.json());
+  const set = (voice) => fetch(`${base}/api/parent/settings`, { method: 'POST', headers: mom, body: JSON.stringify({ voice }) });
+  let s = await state();
+  assert.deepEqual(s.voice, { followUp: true, wake: true });
+  assert.deepEqual(s.wake, { name: '云笈', tokens: 'y ún j í' }, 'the companion who talks: her name, as the listener spells it');
+  assert.equal((await set({ followUp: false })).status, 200);
+  s = await state();
+  assert.deepEqual(s.voice, { followUp: false, wake: true }, 'one switch at a time');
+  assert.deepEqual((await (await get('/api/parent/state', mom)).json()).voice, { followUp: false, wake: true });
+  await set({ wake: false });
+  assert.equal((await state()).wake, null, 'turned off: no name to listen for');
+  await set({ followUp: true, wake: true });
 });

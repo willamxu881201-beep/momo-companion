@@ -40,8 +40,10 @@ async function tts({ text, onAudio }) {
 // Stand-ins for the two recognisers. `flashSays` is what the flash one does next.
 const heard = [];
 let flashSays = { text: '明天上什么课？' };
-async function flashAsr() {
+let hot = null; // the hot words the flash recogniser was given
+async function flashAsr({ hotwords }) {
   heard.push('flash');
+  hot = hotwords;
   if (flashSays.code) throw Object.assign(new Error(`flash ASR ${flashSays.code}`), { code: flashSays.code, status: 200 });
   return flashSays.text;
 }
@@ -178,6 +180,20 @@ test('speech goes to the flash recogniser; when it is busy, that one clip goes t
 });
 
 // Last in this file: it leaves the flash recogniser switched off for ten minutes.
+test('语音唤醒: the server checks her name was really said, and gives what followed it; the names go as hot words', async () => {
+  const called = async (text) => {
+    flashSays = { text };
+    return (await post('/api/asr', { wav: toneWav(), wake: true })).json();
+  };
+  assert.deepEqual(await called('嗨，云笈，明天上什么课？'), { text: '嗨，云笈，明天上什么课？', called: true, rest: '明天上什么课？' });
+  assert.deepEqual(await called('云集。'), { text: '云集。', called: true, rest: '' }, 'however it is written; just her name');
+  assert.deepEqual(await called('街上挂满了星星灯笼'), { text: '街上挂满了星星灯笼', called: false, rest: '' }, 'not her name: a television');
+  assert.deepEqual(await called('星灯，你好'), { text: '星灯，你好', called: false, rest: '' }, 'another companion, not the one who talks now');
+  assert.ok(['云笈', '星灯', '彩练', '芯芯', '小九'].every((n) => hot.includes(n)), `hot words: ${hot}`);
+  flashSays = { text: '明天上什么课？' };
+  assert.deepEqual((await (await post('/api/asr', { wav: toneWav() })).json()), { text: '明天上什么课？' }, 'a tap: just the words');
+});
+
 test('when the flash recogniser is not granted, Ark takes over for a while', async () => {
   const log = console.warn;
   console.warn = () => {};

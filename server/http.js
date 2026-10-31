@@ -7,7 +7,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { pipeline } from 'node:stream';
 import { addDays, dateZh, isDate, nowIn, timeToMinutes } from './dates.js';
 import { KID_COOKIE, KID_TTL_S, PARENT_COOKIE, cookie, parseCookies } from './auth.js';
-import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES } from './characters.js';
+import { GIRLS, PETS, STAGE_NAMES, STAGE_UP, STAGES, callsHer } from './characters.js';
 import { inQuiet } from './events.js';
 import { MIME_EXT } from './files.js';
 import { PART_ZH, TYPE_ZH } from './extract.js';
@@ -28,11 +28,13 @@ const TYPES = {
   '.mp3': 'audio/mpeg',
   '.mp4': 'video/mp4',
   '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm', // the wake word listener (web/kws)
+  '.txt': 'text/plain; charset=utf-8',
 };
 const PAGES = { '/': 'kid.html', '/parent': 'parent.html' };
 const CSP =
   "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; " +
-  "style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+  "style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -199,8 +201,14 @@ export function createHandler({
     return { ok: true };
   });
 
+  // What was said. wake: the tablet heard the companion's name (语音唤醒) and wants to know
+  // whether it really was her name ({ called }) and what was said after it ({ rest }).
   on('POST', '/api/asr', 'kid', async (ctx) => {
     const wav = Buffer.from(String(ctx.body.wav || ''), 'base64');
+    const profile = store.getSetting('profile');
+    // The names that may be said, to be written just so: the companions, the pets, MoMo.
+    const names = [...Object.values(GIRLS).map((g) => g.name), ...Object.values(PETS).map((p) => p.name), profile.kidName].filter(Boolean);
+    const answer = (text) => (ctx.body.wake ? { text, ...callsHer(GIRLS[profile.girl], text) } : { text });
     const seconds = wavSeconds(wav);
     if (seconds < 0.3) return { text: '', reason: 'short' };
     if (seconds > 30) throw new HttpError(413, '说得太长啦，30 秒以内哦');
@@ -212,9 +220,9 @@ export function createHandler({
     const took = (how) => console.log(`[asr] ${how} ${Date.now() - t0} ms for ${seconds.toFixed(1)} s of speech`);
     if (config.ttsAppId && Date.now() > flashOffUntil) {
       try {
-        const text = await flashAsr({ appId: config.ttsAppId, token: config.ttsToken, wav });
+        const text = await flashAsr({ appId: config.ttsAppId, token: config.ttsToken, wav, hotwords: names });
         took('flash');
-        return { text };
+        return answer(text);
       } catch (err) {
         // Not granted, or the keys are refused: stop asking for a while. Anything else
         // (busy, a network hiccup) only sends this one clip to Ark.
@@ -222,9 +230,9 @@ export function createHandler({
         console.warn('[asr] flash recogniser not used:', err.message);
       }
     }
-    const text = await arkAsr({ apiKey: config.arkApiKey, model: config.asrModel, wavBase64: wav.toString('base64') });
+    const text = await arkAsr({ apiKey: config.arkApiKey, model: config.asrModel, wavBase64: wav.toString('base64'), names });
     took('ark');
-    return { text };
+    return answer(text);
   });
 
   // A kid page just woke up: note its screen and browser, to tune the layout for real devices.
@@ -493,7 +501,11 @@ export function createHandler({
       if (timeToMinutes(b.quiet.start) === null || timeToMinutes(b.quiet.end) === null) throw new HttpError(400, '安静时间格式是 HH:MM');
       store.setSetting('quiet', { start: b.quiet.start, end: b.quiet.end });
     }
-    if (b.voice) store.setSetting('voice', { followUp: Boolean(b.voice.followUp) });
+    if (b.voice) {
+      const v = store.getSetting('voice');
+      for (const k of ['followUp', 'wake']) if (k in b.voice) v[k] = Boolean(b.voice[k]);
+      store.setSetting('voice', v);
+    }
     if (b.voices) {
       const v = {};
       for (const k of Object.keys(GIRLS)) if (b.voices[k]) v[k] = String(b.voices[k]).trim().slice(0, 80);
@@ -548,6 +560,8 @@ export function createHandler({
       looked: lookedToday(s.now.date), // MoMo sees how often Mom looked in through the camera
       files: store.kidFileCount(store.getSetting('kidFilesSeen')), // { n, fresh }: her files, and the new ones from Mom
       voice: store.getSetting('voice'),
+      // 语音唤醒: the name the tablet listens for (the companion who talks), unless Mom turned it off
+      wake: store.getSetting('voice').wake && GIRLS[s.profile.girl] ? { name: GIRLS[s.profile.girl].name, tokens: GIRLS[s.profile.girl].wake.tokens } : null,
     };
   }
 
@@ -659,7 +673,7 @@ export function createHandler({
       headers['Content-Security-Policy'] = CSP;
       headers['Cache-Control'] = 'no-cache';
     } else {
-      headers['Cache-Control'] = /^(img|vid)\//.test(rel) ? 'public, max-age=604800' : 'no-cache';
+      headers['Cache-Control'] = /^(img|vid|kws)\//.test(rel) ? 'public, max-age=604800' : 'no-cache'; // (kws: the wake word listener, 20 MB)
     }
     // Safari won't play a video unless it can fetch byte ranges of it.
     const range = byteRange(req.headers.range, st.size);

@@ -102,7 +102,9 @@ export const DEFAULT_SETTINGS = {
   cycle: { cycleLength: 6, anchorDate: null, anchorDay: null, schoolWeekdays: [1, 2, 3, 4, 5] },
   profile: { kidName: 'MoMo', girl: 'b', pet: '3' },
   kidFilesSeen: 0, // when MoMo last looked at her files (ms)
-  voice: { followUp: true }, // 连续对话: after answering words said out loud, she listens a little longer
+  // followUp (连续对话): after answering words said out loud, she listens a little longer.
+  // wake (语音唤醒): the tablet listens for her name, on the tablet itself.
+  voice: { followUp: true, wake: true },
   hidden: { girls: [], pets: [] },
   quiet: { start: '21:30', end: '06:30' },
   kidLink: { key: null },

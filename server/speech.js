@@ -20,7 +20,10 @@ const FLASH_URL = `${SPEECH_ORIGIN}/api/v3/auc/bigmodel/recognize/flash`;
 
 // Doubao's flash recogniser. Resolves the text ('' when there was no speech), or
 // throws an error carrying the service's status `code` and the HTTP `status`.
-export async function transcribeFlash({ appId, token, wav }) {
+// hotwords: names it would otherwise mishear (云笈 comes out as 云集 without).
+export async function transcribeFlash({ appId, token, wav, hotwords = [] }) {
+  const request = { model_name: 'bigmodel' };
+  if (hotwords.length) request.corpus = { context: JSON.stringify({ hotwords: hotwords.map((word) => ({ word })) }) };
   const res = await request(FLASH_URL, {
     method: 'POST',
     timeoutMs: 15000,
@@ -32,7 +35,7 @@ export async function transcribeFlash({ appId, token, wav }) {
       'X-Api-Request-Id': randomUUID(),
       'X-Api-Sequence': '-1',
     },
-    body: JSON.stringify({ user: { uid: 'momo-tablet' }, audio: { data: wav.toString('base64'), format: 'wav' }, request: { model_name: 'bigmodel' } }),
+    body: JSON.stringify({ user: { uid: 'momo-tablet' }, audio: { data: wav.toString('base64'), format: 'wav' }, request }),
   });
   return flashText(res);
 }
@@ -55,14 +58,15 @@ export function flashText({ status, headers, body }) {
   return cleanTranscript(text);
 }
 
-export async function transcribe({ apiKey, model, wavBase64 }) {
+// names: words that may be said and should be written just so.
+export async function transcribe({ apiKey, model, wavBase64, names = [] }) {
   const r = await arkChat({
     apiKey,
     model,
     maxTokens: 200,
     timeoutMs: 40000, // the upload to Beijing took up to 20 s before BBR; keep the margin
     messages: [
-      { role: 'system', content: ASR_PROMPT },
+      { role: 'system', content: names.length ? `${ASR_PROMPT}可能说到的名字：${names.join('、')}。` : ASR_PROMPT },
       {
         role: 'user',
         content: [

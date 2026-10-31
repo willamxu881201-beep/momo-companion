@@ -7,6 +7,7 @@
 #   tools/browser/run.sh scenes       every place by day and night; a task comes due and she speaks up
 #   tools/browser/run.sh files        MoMo's files: what Mom sent her (new, told, played) and her own
 #   tools/browser/run.sh listen       连续对话: she listens on after answering; stops when nobody talks, after five turns, or when turned off
+#   tools/browser/run.sh wake         语音唤醒: her name heard on the tablet, the question with it, a false call let go, the switch
 #   tools/browser/run.sh docs --real  documents read and asked about, with the real models
 #   tools/browser/run.sh e2e --real   everything with the real models (needs ARK_API_KEY)
 # Screenshots and the server's log go to tools/browser/out/<check>/.

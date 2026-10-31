@@ -4,6 +4,7 @@
 import {
   $, api, app, busyLabel, chime, look, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, snapshot, stopSpeaking, wakeUp,
 } from './companion.js';
+import { listenForName, stopListeningForName } from './wake.js';
 
 app.send = send;
 // 连续对话 (if Mom left it on), but never at quiet time: she is asleep.
@@ -94,6 +95,7 @@ function render(s) {
   $('loveText').textContent = af.next ? `好感度 ${af.points}，再攒 ${af.next - af.points} 点就进化` : `好感度 ${af.points}，已经是最厉害的样子啦`;
 
   noteStage(s);
+  wakeWord(s);
   pose();
   placeBubble();
 
@@ -124,6 +126,20 @@ function noteStage(s) {
     } catch {
       /* private mode */
     }
+  }
+}
+
+// 语音唤醒 (unless Mom turned it off; never at quiet time): the tablet listens for her
+// name. The tag says so whenever it does: the microphone is never on without MoMo knowing.
+function wakeWord(s) {
+  if (app.started && s.wake && !s.quiet && !document.hidden) {
+    listenForName(s.wake, (name) => {
+      $('wakeTag').textContent = `👂 喊「${name}」`;
+      $('wakeTag').hidden = false;
+    });
+  } else {
+    stopListeningForName();
+    $('wakeTag').hidden = true;
   }
 }
 
@@ -539,7 +555,10 @@ $('startBtn').addEventListener('click', async () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && app.started) {
     wakeLock();
-    load();
+    load(); // (and listening for her name again)
+  } else if (document.hidden) {
+    stopListeningForName(); // out of sight: the microphone goes off
+    $('wakeTag').hidden = true;
   }
 });
 

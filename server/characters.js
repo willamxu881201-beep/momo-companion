@@ -1,6 +1,9 @@
 // The eight companions. Girls talk; pets answer with sounds and moves and
 // evolve with affinity. Voices are Doubao TTS 2.0 speaker IDs and can be
 // changed per girl in the parent console.
+// wake: her name for 语音唤醒 — as the keyword model spells it (pinyin initials and
+// finals, web/kws/tokens.txt), and as a recogniser may write it when it is said
+// (the first is the name itself; 芯芯 alone comes out as 星星).
 
 export const GIRLS = {
   a: {
@@ -8,26 +11,41 @@ export const GIRLS = {
     look: '双丫髻系粉丝带的国风校服学姐',
     style: '温柔的大姐姐，说话轻轻的、慢慢的，句尾常带"呀""呢"，很会安慰人',
     voice: 'saturn_zh_female_keainvsheng_tob',
+    wake: { tokens: 'x īng d ēng', sounds: ['星灯', '心灯', '新灯', '星登'] },
   },
   b: {
     name: '云笈',
     look: '高马尾戴祥云玉簪的仙侠小侠女，随身带着一卷竹简（就是课程表）',
     style: '活泼爽快的小侠女，爱给人鼓劲，偶尔来一句"拿下！""出发！"，但从不打打杀杀',
     voice: 'saturn_zh_female_tiaopigongzhu_tob',
+    wake: { tokens: 'y ún j í', sounds: ['云笈', '云集', '云极', '云吉', '云及', '云级'] },
   },
   c: {
     name: '彩练',
     look: '敦煌飞天风格的小仙女，捧着一盏莲花灯',
     style: '甜美温婉，说话像讲故事，偶尔一句带点诗意的话，但要让八岁孩子听得懂',
     voice: 'zh_female_mengyatou_uranus_bigtts',
+    wake: { tokens: 'c ǎi l iàn', sounds: ['彩练', '彩链', '彩恋', '彩炼', '采练'] },
   },
   d: {
     name: '芯芯',
     look: '短发挑染的赛博国风智能助手，身前有一块全息小屏',
     style: '机灵的智能助手，说话干脆利落、条理清楚，常说"已查到""已设好"，偶尔俏皮地眨眨眼',
     voice: 'saturn_zh_female_tiaopigongzhu_tob',
+    wake: { tokens: 'x īn x īn', sounds: ['芯芯', '欣欣', '心心', '新新', '馨馨', '鑫鑫', '昕昕', '星星'] },
   },
 };
+
+// Whether a line someone said calls this girl by her name: it begins with it (after a
+// "嘿", "你好" or the like), however the recogniser wrote it. Then the rest of the line:
+// { called, rest }. (Only at the start: "街上挂满了星星灯笼" doesn't call 芯芯.)
+const HELLO = /^(?:嘿|嗨|哈喽|喂|哎|诶|欸|嗯|你好|hi|hey|hello)?[\s，,。.!！?？、~～]*/i;
+export function callsHer(girl, text) {
+  const line = String(text || '').trim().replace(HELLO, '');
+  const sound = girl && girl.wake ? girl.wake.sounds.find((s) => line.startsWith(s)) : null;
+  if (!sound) return { called: false, rest: '' };
+  return { called: true, rest: line.slice(sound.length).replace(/^[\s，,。.!！?？、~～]+/, '').replace(/^[\s，,。.!！?？、~～]+$/, '') };
+}
 
 export const PETS = {
   1: { name: '糖糖', kind: '小橘猫', sound: '喵～', moves: ['甩甩尾巴', '竖起耳朵', '蹭蹭你'] },

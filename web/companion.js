@@ -22,9 +22,11 @@ export const app = {
   bubbleMax: Infinity, // longest line shown whole by her mouth; longer ones are cut after a sentence
   onSay: () => {}, // every line she says, whole (Mom's page keeps them in a list)
   followUp: () => false, // whether she may listen on by herself after an answer (连续对话)
+  onListened: () => {}, // a turn of listening is over (the wake word listener starts again)
 };
 let audioCtx = null;
 let currentAudio = null;
+export const audio = () => audioCtx; // the page's one sound context (wake.js listens through it too)
 let speakSeq = 0;
 
 export async function api(path, body) {
@@ -1487,20 +1489,26 @@ const FOLLOW_MS = 6000; // how long she waits for more words
 const FOLLOW_TURNS = 5; // times in a row she listens on by herself
 
 // follow: which turn of listening on by herself this is (0: someone tapped the mic).
-export async function startListening({ follow = 0 } = {}) {
+// stream, pre: she was called by her name (wake.js): its microphone, and the sound up to
+// now, the name in it, so that "云笈，明天上什么课" is heard whole.
+export async function startListening({ follow = 0, stream = null, pre = null } = {}) {
   stopSpeaking();
   fetch('/api/warm', { method: 'POST' }).catch(() => {}); // server opens its connections while the child talks
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-  } catch {
-    $('typeForm').hidden = false;
-    await say('我听不到声音，麦克风好像没打开。先打字跟我说吧。', { mood: 'worried' });
-    return;
+  const own = !stream;
+  if (own) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    } catch {
+      $('typeForm').hidden = false;
+      await say('我听不到声音，麦克风好像没打开。先打字跟我说吧。', { mood: 'worried' });
+      app.onListened();
+      return;
+    }
   }
   const src = audioCtx.createMediaStreamSource(stream);
   const proc = audioCtx.createScriptProcessor(4096, 1, 1);
-  const r = { stream, src, proc, bufs: [], total: 0, heard: false, silentMs: 0, first: -1, last: -1, t0: Date.now(), rate: audioCtx.sampleRate, follow };
+  const r = { stream, own, src, proc, bufs: [], total: 0, heard: false, silentMs: 0, first: -1, last: -1, t0: Date.now(), rate: audioCtx.sampleRate, follow, wake: Boolean(pre) };
+  if (pre && pre.length) Object.assign(r, { bufs: [...pre], total: pre.reduce((n, b) => n + b.length, 0), heard: true, first: 0, last: pre.length - 1 });
   proc.onaudioprocess = (e) => {
     const d = e.inputBuffer.getChannelData(0);
     r.bufs.push(new Float32Array(d));
@@ -1535,11 +1543,12 @@ export async function stopListening() {
   $('bubble').classList.remove('dim');
   r.proc.disconnect();
   r.src.disconnect();
-  r.stream.getTracks().forEach((t) => t.stop());
+  if (r.own) r.stream.getTracks().forEach((t) => t.stop()); // (a wake word listener's microphone stays on)
   $('mic').classList.remove('listening');
   if (!r.heard) {
     setBusy(false);
     petLife.release();
+    app.onListened();
     return;
   }
   setBusy(true, '在听…');
@@ -1548,26 +1557,48 @@ export async function stopListening() {
     // audio costs real upload time on the way to the recogniser.
     const speech = r.bufs.slice(Math.max(0, r.first - 3), r.last + 4);
     const wav = encodeWav16k(speech, speech.reduce((n, b) => n + b.length, 0), r.rate);
-    const { text } = await api('/api/asr', { wav });
+    // Called by her name: the server says whether her name was really said (a television
+    // can sound like it), and what was said after it.
+    const { text, called, rest } = await api('/api/asr', r.wake ? { wav, wake: true } : { wav });
     setBusy(false);
-    if (text) {
+    if (r.wake && !called) settle(); // not her name after all: she lets it go
+    else if (r.wake && !rest) {
+      await say(pick(HERE), { mood: 'happy' }); // just her name: she answers, and listens for the rest
+      listenOn(r.follow + 1, true);
+    } else if (text) {
       await app.send(text);
       listenOn(r.follow + 1);
-    } else if (r.follow) petLife.release(); // a noise while she listened on: she just stops
+    } else if (r.follow) settle(); // a noise while she listened on: she just stops
     else await say('我没听清楚，可以再说一遍吗？', { mood: 'worried' });
   } catch (err) {
     setBusy(false);
-    if (err.message !== 'locked') await say('我没听清楚，可以再说一遍吗？', { mood: 'worried' });
+    if (err.message !== 'locked' && !r.wake) await say('我没听清楚，可以再说一遍吗？', { mood: 'worried' });
+    else settle();
   }
+  if (!app.rec) app.onListened();
+}
+
+const HERE = ['我在！', '嗯，我在呢～', '来啦！你说～'];
+
+// Nothing to say after all (a noise, or it wasn't her name): her thinking face goes.
+function settle() {
+  look.thinking = false;
+  if (bubble.mode === 'think') {
+    bubble.mode = null;
+    placeBubble();
+  }
+  pose();
+  petLife.release();
 }
 
 // After an answer to words said out loud: once she has said it (and a breath later, so
-// she doesn't hear herself), she listens for more.
-async function listenOn(turn) {
-  if (turn > FOLLOW_TURNS || !app.followUp()) return;
+// she doesn't hear herself), she listens for more. always: even with 连续对话 off (she was
+// only called by her name, and the question is still to come).
+async function listenOn(turn, always = false) {
+  if (turn > FOLLOW_TURNS || (!always && !app.followUp())) return;
   for (let i = 0; i < 600 && (look.speaking || app.busy); i += 1) await sleep(100);
   await sleep(350);
-  if (app.rec || app.busy || look.speaking || document.hidden || !app.followUp()) return;
+  if (app.rec || app.busy || look.speaking || document.hidden || (!always && !app.followUp())) return app.onListened();
   startListening({ follow: turn });
 }
 

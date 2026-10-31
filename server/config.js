@@ -17,6 +17,7 @@ export const config = {
   asrModel: env.ASR_MODEL || 'doubao-seed-2-0-mini-260428',
   visionModel: env.VISION_MODEL || 'doubao-seed-2-1-pro-260915', // reads photos, scanned pages and check-in snapshots
   docModel: env.DOC_MODEL || 'doubao-seed-2-1-pro-260915', // reads documents' text: what they are, a summary
+  pointModel: env.POINT_MODEL || 'doubao-seed-2-1-lite-260915', // a touched spot on a page, a place to mark: quick, and as exact as pro on homework pages
 
   ttsAppId: env.DOUBAO_APPID || '',
   ttsToken: env.DOUBAO_TOKEN || '',
@@ -33,5 +34,7 @@ export const config = {
     uploadBytes: num(env.UPLOAD_MAX_MB, 2048) * 1048576, // the biggest file anyone can send
     momChatPerDay: num(env.MOM_CHAT_PER_DAY, 80),
     notifyPerDay: num(env.NOTIFY_PER_DAY, 30),
+    pointPerDay: num(env.POINT_PER_DAY, 100), // "这是什么？" with a finger on a page
+    findPerDay: num(env.FIND_PER_DAY, 200), // places looked for on a page to mark them
   },
 };

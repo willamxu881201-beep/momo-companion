@@ -52,7 +52,6 @@
   <header class="bar">
     <div class="when"><b id="date" class="glass"></b><span id="dlabel" class="tag"></span></div>
     <div id="next" class="next glass"></div>
-    <button id="adminBtn" class="ghost glass manage" type="button">管理</button>
   </header>
 
   <section id="bubble" class="bubble" aria-live="polite" hidden>
@@ -62,28 +61,82 @@
     <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
   </section>
 
-  <aside class="side">
-    <div id="chatPanel" class="panel glass" hidden>
-      <h2>刚才说的</h2>
-      <ul id="chat" class="chat" aria-live="polite"></ul>
-    </div>
-    <div class="panel glass">
-      <h2>今天的任务</h2>
+  <!-- The rail: what Mom can open beside the companion, one at a time on the right
+       (below her, on a phone). The day's record is there to begin with. -->
+  <nav class="rail" aria-label="功能">
+    <button class="ghost glass round" type="button" data-panel="feed" aria-label="今天的动态" title="今天的动态"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="tasks" aria-label="今天的任务" title="今天的任务"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5h10.5M9.5 12h10.5M9.5 17.5h10.5"/><path d="M3.5 6.6l1.4 1.4 2.4-2.8M3.5 12.1l1.4 1.4 2.4-2.8M3.5 17.6l1.4 1.4 2.4-2.8"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="chat" aria-label="刚才说的" title="刚才说的"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-4.5 3.5v-3.5H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="look" aria-label="看看沫沫" title="看看沫沫"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="files" aria-label="文件" title="文件"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.6C10.2 5.1 7.6 4.6 4 4.9v13.4c3.6-.3 6.2.2 8 1.7 1.8-1.5 4.4-2 8-1.7V4.9c-3.6-.3-6.2.2-8 1.7z"/><path d="M12 6.6v13.4"/></svg></button>
+    <button id="adminBtn" class="ghost glass round" type="button" aria-label="管理" title="管理"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button>
+  </nav>
+
+  <aside class="side" id="side">
+    <section id="panel-feed" class="panel glass">
+      <div class="panel-top"><h2>今天的动态</h2></div>
+      <ul id="feed" class="feed"></ul>
+    </section>
+    <section id="panel-tasks" class="panel glass" hidden>
+      <div class="panel-top"><h2>今天的任务</h2></div>
       <ul id="tasks" class="tasks mom-tasks"></ul>
-    </div>
-    <div class="panel glass">
-      <h2 id="lookTitle">看看沫沫</h2>
+    </section>
+    <section id="panel-chat" class="panel glass" hidden>
+      <div class="panel-top"><h2>刚才说的</h2></div>
+      <p id="chatNone" class="hint-line">还没有说话。按「按一下说话」或者打字问问伙伴。</p>
+      <ul id="chat" class="chat" aria-live="polite"></ul>
+    </section>
+    <section id="panel-look" class="panel glass" hidden>
+      <div class="panel-top"><h2 id="lookTitle">看看沫沫</h2></div>
       <div class="quick">
         <button type="button" data-check="look">👀 在做什么</button>
         <button type="button" data-check="piano">🎹 在练琴吗</button>
         <button type="button" data-check="posture">✍️ 看看坐姿</button>
         <button type="button" id="tellBtn">💬 带句话</button>
       </div>
-    </div>
-    <div class="panel glass">
-      <h2>今天的动态</h2>
-      <ul id="feed" class="feed"></ul>
-    </div>
+    </section>
+
+    <!-- 文件: everything sent to the companion, found by name or what is in it; one
+         opens here, to look at, point at, and keep or share. -->
+    <section id="panel-files" class="panel glass files" hidden>
+      <div id="fileLib">
+        <div class="panel-top"><h2>文件</h2></div>
+        <form id="fileFind" class="find">
+          <input id="fileQuery" maxlength="60" placeholder="文件名或里面的内容，比如：运动会" aria-label="找文件">
+          <button type="submit">搜索</button>
+        </form>
+        <p id="fileStats" class="hint-line"></p>
+        <ul id="fileList" class="lib"></ul>
+        <button id="fileMore" type="button" class="ghost" hidden>再看更早的</button>
+        <p class="hint-line">发给伙伴的照片和文件都存在自己的服务器上，不会自动删除。妈妈发的沫沫也能在她的图书馆里看到；看起来是妈妈自己的（工作文件、账单、合同、病历这类）只给妈妈，每个文件都可以改。</p>
+      </div>
+      <div id="fileView" class="viewer" hidden>
+        <div class="panel-top">
+          <button id="fileBack" class="x" type="button" aria-label="回到文件"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
+          <h2 id="docTitle"></h2>
+          <button id="paperZoom" class="x" type="button" aria-label="放大" aria-pressed="false" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M10.5 7.8v5.4M7.8 10.5h5.4"/></svg></button>
+        </div>
+        <p id="docMeta" class="file-meta"></p>
+        <div id="paperBox" class="paper-box" hidden>
+          <div id="paper" class="paper"><img id="paperImg" alt=""><div id="marks" class="marks"></div></div>
+        </div>
+        <div id="pager" class="pager" hidden>
+          <button id="pagePrev" class="ghost" type="button">上一页</button>
+          <span id="pageNo"></span>
+          <button id="pageNext" class="ghost" type="button">下一页</button>
+        </div>
+        <p id="pointHint" class="point-hint" hidden></p>
+        <p id="docGist" class="file-gist"></p>
+        <div id="docMore" class="file-more"></div>
+        <label id="docShareRow" class="share"><input id="docShare" type="checkbox"> 给沫沫看（她的图书馆里能看到，也能问伙伴）</label>
+        <div class="row">
+          <a id="docSave" class="ghost" href="#" download>保存原文件</a>
+          <button id="docAsk" class="ghost" type="button">问问伙伴</button>
+          <button id="docReread" class="ghost" type="button" hidden>再读一次</button>
+          <button id="docDelete" class="ghost" type="button">删除</button>
+        </div>
+      </div>
+    </section>
   </aside>
 
   <div class="dock">
@@ -106,23 +159,6 @@
     <img id="photoImg" alt="">
     <p id="photoText"></p>
     <button id="photoClose" class="ghost" type="button">关闭</button>
-  </div>
-</div>
-
-<div id="docSheet" class="sheet" hidden>
-  <div class="sheet-card doc-card" role="dialog" aria-labelledby="docTitle">
-    <h2 id="docTitle"></h2>
-    <p id="docMeta" class="meta"></p>
-    <p id="docGist" class="gist"></p>
-    <div id="docMore"></div>
-    <label id="docShareRow" class="share"><input id="docShare" type="checkbox"> 给沫沫看（她的页面上能看到，也能问伙伴）</label>
-    <div class="row">
-      <a id="docSave" class="ghost" href="#" download>保存原文件</a>
-      <button id="docAsk" class="ghost" type="button">问问伙伴</button>
-      <button id="docReread" class="ghost" type="button" hidden>再读一次</button>
-      <button id="docDelete" class="ghost" type="button">删除</button>
-      <button id="docClose" type="button">关闭</button>
-    </div>
   </div>
 </div>
 
@@ -151,7 +187,6 @@
       <button type="button" data-tab="tasks">每天的任务</button>
       <button type="button" data-tab="companion">伙伴</button>
       <button type="button" data-tab="tablet">平板</button>
-      <button type="button" data-tab="files">文件</button>
       <button type="button" data-tab="today">好感度和用量</button>
     </nav>
 
@@ -281,20 +316,6 @@
       <div class="card">
         <h2>照片</h2>
         <p class="hint">发给伙伴的照片和文件一直存在自己的服务器上，直到在「文件」里删除；「看看沫沫」时平板拍的照片 7 天后自动删除。只有登录了家长密码才能看（沫沫的页面只看得到她自己发的和妈妈给她看的）。平板拍照时，屏幕角上会显示摄像头画面，伙伴也会先说一声。</p>
-      </div>
-    </section>
-
-    <section id="tab-files" class="tab" hidden>
-      <div class="card">
-        <h2>所有文件</h2>
-        <p class="hint">沫沫和妈妈发给伙伴的照片和文件，不管什么格式、多大，都存在自己的服务器上，不会自动删除；伙伴随时可以翻出来读。妈妈发的文件沫沫也能在她的页面上看到（点文件夹按钮），也能问伙伴；看起来是妈妈自己的（工作文件、账单、合同、病历这类）只给妈妈，每个文件都可以改。「看看沫沫」拍的照片 7 天后自动删除。</p>
-        <form id="fileFind" class="row">
-          <label class="grow">找文件 <input id="fileQuery" maxlength="60" placeholder="文件名或里面的内容，比如：运动会"></label>
-          <button type="submit">搜索</button>
-        </form>
-        <p id="fileStats" class="hint"></p>
-        <ul id="fileList" class="list files"></ul>
-        <button id="fileMore" type="button" class="secondary" hidden>再看更早的</button>
       </div>
     </section>
 

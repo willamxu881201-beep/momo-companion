@@ -2,12 +2,15 @@
 // the made-up ones in test/fixtures.
 //  1. Mom sends a Word notice and asks what to bring; an Excel score sheet and asks
 //     which subject is weakest; a scanned PDF (read as pictures).
-//  2. The record shows them; a document's card opens.
+//  2. The record shows them; a document's card opens; the notice opens as its pages.
 //  3. MoMo sends slides from class and asks about them; Mom asks for a summary of them.
 //  4. MoMo's page has Mom's files too: she opens the notice and asks to hear about it.
+//  5. Homework: MoMo sends a page of it; it opens beside her with its problems outlined;
+//     "第五题怎么做？" lights problem 5; a touch on problem 6, and she answers about it
+//     (a question to think about, not the answer), marking what she talks about.
 const path = require('node:path');
 const { chromium } = require('playwright');
-const { BASE, momContext, kidLink, voiceStub, said, waitSaid, nextSaid, watchErrors, finish } = require('./lib.cjs');
+const { BASE, momContext, kidLink, voiceStub, said, waitSaid, nextSaid, watchErrors, finish, homeworkPage } = require('./lib.cjs');
 
 const OUT = process.argv[2];
 const FIXTURES = path.join(__dirname, '../../test/fixtures');
@@ -30,7 +33,10 @@ async function answer(page, before, ms = 90000) {
 async function send(page, file) {
   const n = (await said(page)).length;
   await page.setInputFiles('#photoInput', path.join(FIXTURES, file));
-  return answer(page, n, 120000);
+  const line = await answer(page, n, 120000);
+  // Read in more than 25 s: "存好了，读完告诉你" first, then what it is.
+  if (!/读完马上告诉你/.test(line)) return line;
+  return nextSaid(page, (await said(page)).lastIndexOf(line) + 1, 180000);
 }
 
 async function ask(page, text) {
@@ -80,24 +86,38 @@ async function ask(page, text) {
   log(`feed: ${feed.join(' | ')}`);
   expect(feed.filter((t) => t.startsWith('📄')).length === 3, 'three documents in the record');
   await mom.tap('#feed .thumb.doc');
-  await mom.waitForSelector('#docSheet:not([hidden])');
+  await mom.waitForSelector('#fileView:not([hidden])');
   const card = await mom.evaluate(() => ({ title: document.getElementById('docTitle').textContent, items: document.querySelectorAll('#docMore li').length, save: document.getElementById('docSave').getAttribute('href') }));
   log(`card: ${JSON.stringify(card)}`);
   expect(card.title && card.items > 0 && /download=1$/.test(card.save), 'a card with its points and the file to save');
   await mom.screenshot({ path: `${OUT}/2_mom_card.png` });
-  await mom.tap('#docClose');
+  await mom.tap('#fileBack');
 
   // The library: every file, found by what is in it; any kind of file is kept.
-  await mom.tap('#adminBtn');
-  await mom.tap('button[data-tab="files"]');
   await mom.waitForFunction(() => document.querySelectorAll('#fileList li').length >= 3, null, { timeout: 10000 });
   await mom.fill('#fileQuery', '接力赛');
   await mom.press('#fileQuery', 'Enter');
   await mom.waitForFunction(() => /找到/.test(document.getElementById('fileStats').textContent), null, { timeout: 10000 });
   const first = await mom.textContent('#fileList li .grow');
-  expect(/notice\.docx/.test(first), `管理 → 文件 finds the notice by what is in it: ${first.slice(0, 60)}`);
+  expect(/notice\.docx/.test(first), `文件 finds the notice by what is in it: ${first.slice(0, 60)}`);
   await mom.screenshot({ path: `${OUT}/2_mom_library.png` });
-  await mom.tap('#adminClose');
+  // A file opened from the list shows its pages; 文件 on the rail goes back to the list;
+  // a file left open for another panel is closed when she comes back.
+  await mom.tap('#fileList li button');
+  await mom.waitForSelector('#fileView:not([hidden]) #paperBox:not([hidden])', { timeout: 60000 }).catch(() => {});
+  await mom.waitForFunction(() => document.getElementById('paperImg').complete && document.getElementById('paperImg').naturalWidth > 0, null, { timeout: 60000 }).catch(() => {});
+  const drawn = await mom.evaluate(() => ({ img: document.getElementById('paperImg').naturalWidth, pages: document.getElementById('pageNo').textContent }));
+  log(`the notice, drawn: ${JSON.stringify(drawn)}`);
+  expect(drawn.img > 0, 'the notice opens as its pages (Word drawn through LibreOffice)');
+  await mom.screenshot({ path: `${OUT}/2_mom_pages.png` });
+  await mom.tap('.rail [data-panel="files"]');
+  expect(await mom.isVisible('#fileLib') && (await mom.isHidden('#fileView')), '文件 with a file open: back to the list');
+  await mom.locator('#fileList li button').first().tap();
+  await mom.waitForSelector('#fileView:not([hidden])');
+  await mom.tap('.rail [data-panel="feed"]');
+  await mom.tap('.rail [data-panel="files"]');
+  expect(await mom.isVisible('#fileLib') && (await mom.isHidden('#fileView')), 'and a file left open is closed when she comes back, not left blank');
+  await mom.tap('.rail [data-panel="feed"]');
   // Any file at all is kept, even one she can't read: here, a recording.
   // (an ASCII name: Playwright's file chooser loses files with Chinese paths)
   require('node:fs').writeFileSync(`${OUT}/piano-lesson.m4a`, Buffer.concat([Buffer.from([0, 0, 0, 32]), Buffer.from('ftypM4A '), Buffer.alloc(4000, 7)]));
@@ -130,8 +150,8 @@ async function ask(page, text) {
   // MoMo's files: what Mom sent is on her page too (new, with a red mark); she opens the
   // notice and asks to hear about it.
   expect((await kid.textContent('#filesNew')) === '4', `four new from Mom on MoMo's page: ${await kid.textContent('#filesNew')}`);
-  await kid.tap('#filesBtn');
-  await kid.waitForSelector('#files:not([hidden]) #fileItems li');
+  await kid.tap('.rail [data-panel="files"]');
+  await kid.waitForSelector('#panel-files:not([hidden]) #fileItems li');
   const kidFiles = await kid.$$eval('#fileItems .name', (n) => n.map((x) => x.textContent));
   log(`MoMo's files: ${kidFiles.join(' | ')}`);
   expect(kidFiles.length === 5 && kidFiles.some((n) => /运动会/.test(n)) && kidFiles.some((n) => /分数/.test(n)), "Mom's four files and her own slides");
@@ -146,6 +166,51 @@ async function ask(page, text) {
   const told = await answer(kid, before);
   log(`she tells MoMo: ${told}`);
   expect(/运动会/.test(told), 'the companion tells MoMo about the file she opened');
+
+  // 5. A page of homework: read for its problems and where they are.
+  const hwPng = await homeworkPage(browser);
+  const hwLine = await (async () => {
+    const before2 = (await said(kid)).length;
+    await kid.setInputFiles('#photoInput', { name: 'homework.png', mimeType: 'image/png', buffer: hwPng });
+    return answer(kid, before2, 120000);
+  })();
+  log(`homework: ${hwLine}`);
+  await kid.waitForFunction(() => document.querySelectorAll('#marks .mark.problem').length >= 4, null, { timeout: 30000 }).catch(() => {});
+  const outlined = await kid.$$eval('#marks .mark.problem b', (b) => b.map((x) => x.textContent));
+  expect(outlined.length >= 5, `it opens beside her, its problems outlined: ${outlined.join(',')}`);
+  const hotTop = () => kid.evaluate(() => {
+    const m = document.querySelector('#marks .mark.hot');
+    return m ? Math.round(parseFloat(m.style.top) * 10) : null;
+  });
+  const five = await ask(kid, '第五题怎么做呀？');
+  log(`about problem 5: ${five}`);
+  const t5 = await hotTop();
+  expect(t5 !== null && t5 > 480 && t5 < 600, `problem 5 is lit while she helps (top at ${t5}‰)`);
+  expect(!/27/.test(five) || /吗|呢|？|\?/.test(five), 'she helps without just giving the answer');
+  await kid.screenshot({ path: `${OUT}/6_kid_homework.png` });
+  // A finger on problem 6, as she would: scrolled to where she can see it (by its
+  // outline, or where it is drawn on the page), then touched.
+  const n6 = (await said(kid)).length;
+  const p6 = await kid.evaluate(async () => {
+    const outline = [...document.querySelectorAll('#marks .mark.problem')].find((m) => (m.querySelector('b') || {}).textContent === '6');
+    const paper = document.getElementById('paper');
+    const at = () => {
+      const r = (outline || paper).getBoundingClientRect();
+      return outline ? { x: r.left + r.width * 0.3, y: r.top + r.height * 0.5 } : { x: r.left + r.width * 0.25, y: r.top + r.height * 0.78 };
+    };
+    const box = document.getElementById('paperBox').getBoundingClientRect();
+    document.getElementById('paperBox').scrollBy(0, at().y - (box.top + box.height / 2));
+    await new Promise((r) => setTimeout(r, 400));
+    return { ...at(), outline: Boolean(outline) };
+  });
+  log(`touching problem 6 at ${Math.round(p6.x)},${Math.round(p6.y)} (${p6.outline ? 'its outline' : 'where it is drawn'})`);
+  await kid.touchscreen.tap(p6.x, p6.y);
+  const six = await nextSaid(kid, n6, 60000);
+  log(`touched problem 6: ${six}`);
+  const t6 = await hotTop();
+  expect(t6 !== null && t6 > 600 && t6 < 880, `she answers about it, and marks it (top at ${t6}‰)`);
+  expect(/吗|呢|？|\?/.test(six), 'and leads her on with a question, as with homework');
+  await kid.screenshot({ path: `${OUT}/7_kid_touched.png` });
 
   const summary = await ask(mom, '总结一下沫沫刚发的课件');
   log(`summary: ${summary}`);

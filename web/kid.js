@@ -2,9 +2,10 @@
 // companion herself (stage, voice, listening) lives in companion.js, shared with Mom's page.
 
 import {
-  $, api, app, busyLabel, chime, look, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, snapshot, stopSpeaking, wakeUp,
+  $, api, app, busyLabel, chime, look, petLife, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, snapshot, stopSpeaking, wakeUp,
 } from './companion.js';
 import { listenForName, stopListeningForName } from './wake.js';
+import { caption, clearView, markFrom, showPages, view } from './viewer.js';
 
 app.send = send;
 // 连续对话 (if Mom left it on), but never at quiet time: she is asleep.
@@ -89,6 +90,8 @@ function render(s) {
   const petInfo = s.pets[p] || { name: '' };
   const af = s.affinity;
   $('petName').textContent = petInfo.name;
+  $('lovePet').src = `/img/pet/${p}_${s.affinity.stage}.jpg`;
+  $('lovePet').alt = petInfo.name;
   $('stageName').textContent = af.stageName || `第 ${af.stage} 阶段`;
   const pct = af.next ? Math.round(((af.points - af.prev) / (af.next - af.prev)) * 100) : 100;
   $('meterFill').style.width = `${Math.max(3, Math.min(100, pct))}%`;
@@ -156,6 +159,7 @@ async function send(text) {
   setBusy(true, '想一想…');
   $('heard').hidden = false;
   $('heard').textContent = `你说：${text}`;
+  if (view.id) markFrom(text); // what she asks about, found on the page on show while the answer comes
   try {
     const r = await api('/api/chat', { text });
     if (r.state) render(r.state);
@@ -284,6 +288,8 @@ $('photoInput').addEventListener('change', async () => {
     const r = await sendFile(file, (k) => busyLabel(k < 1 ? `发送 ${Math.round(k * 100)}%` : reading));
     if (r.state) render(r.state);
     setBusy(false);
+    // A page of homework, or something to read: it opens beside her, to point at.
+    if (r.fileId && (r.kind === 'homework_page' || r.kind === 'document')) showFile(r.fileId);
     await say(r.line, { mood: 'happy' });
   } catch (err) {
     setBusy(false);
@@ -291,14 +297,69 @@ $('photoInput').addEventListener('change', async () => {
   }
 });
 
-// ---- her files ----------------------------------------------------------------
-// What she sent the companion, and what Mom sent for her (new ones marked). One opens to
-// be looked at, listened to or read, and the companion can tell her about it.
+// ---- the rail and its panels ---------------------------------------------------
+// The rail's buttons open their panel on the right (over the lower part, on a phone):
+// today's tasks, the library, the pet. One at a time; its button again, or the panel's
+// ×, closes it, and the right side is empty again. (The library's button, while a file
+// is open in it, goes back to her list first.)
+
+let open = null; // the panel on show: 'tasks', 'files', 'love', or null
+
+function openPanel(name) {
+  open = name;
+  document.body.dataset.panel = name;
+  for (const sec of $('side').children) sec.hidden = sec.id !== `panel-${name}`;
+  document.querySelectorAll('.rail [data-panel]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.panel === name)));
+  if (name !== 'files') reading(false);
+  restage();
+}
+
+function closePanel() {
+  open = null;
+  delete document.body.dataset.panel;
+  for (const sec of $('side').children) sec.hidden = true;
+  document.querySelectorAll('.rail [data-panel]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+  reading(false);
+  restage();
+}
+
+// A file open: the panel widens to read it in, and the characters make room.
+function reading(on) {
+  document.body.classList.toggle('reading', on);
+  if (!on) {
+    $('fileShow').textContent = ''; // stops any music or video
+    clearView();
+  }
+}
+
+// The characters' room changed: the pet's floor and her bubble follow.
+function restage() {
+  requestAnimationFrame(() => {
+    petLife.layout();
+    placeBubble();
+  });
+}
+
+document.querySelectorAll('.rail [data-panel]').forEach((b) =>
+  b.addEventListener('click', () => {
+    const name = b.dataset.panel;
+    if (open === name && !(name === 'files' && shownFile)) return closePanel();
+    if (open !== name) openPanel(name);
+    if (name === 'files') openLibrary();
+  }),
+);
+document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closePanel));
+// On a phone the panel sits just above the mic row, however tall that is.
+new ResizeObserver(([e]) => document.documentElement.style.setProperty('--dock-h', `${Math.round(e.target.getBoundingClientRect().height)}px`)).observe(document.querySelector('.dock'));
+
+// ---- the library ----------------------------------------------------------------
+// What she sent the companion, and what Mom sent for her (new ones marked). One opens in
+// the panel to look at — and to point at: a touch on a page asks the companion what is
+// there (viewer.js) — or to listen to or read; the companion can tell her about it.
 
 const iconOf = (f) => (/^audio\//.test(f.mime) ? '🎵' : /^video\//.test(f.mime) ? '🎬' : f.kind === 'photo' ? '🖼️' : f.kind === 'doc' ? '📄' : '📦');
-const titleOf = (f) => (f.doc ? f.doc.title : (f.name || '').replace(/\.[a-z0-9]{1,8}$/i, '') || '文件');
+const titleOf = (f) => (f.doc ? f.doc.title : f.read === 'homework_page' ? '作业' : (f.name || '').replace(/\.[a-z0-9]{1,8}$/i, '') || '文件');
 const kindZh = (f) => (/^audio\//.test(f.mime) ? '音频' : /^video\//.test(f.mime) ? '视频' : f.typeZh ? `${f.typeZh}${f.kind === 'doc' ? '文件' : ''}` : '文件');
-const SHOWN = /^image\/(jpeg|png|gif|webp|bmp)$/; // pictures the browser shows
 function dayOf(ms) {
   const d = new Date(ms);
   if (d.toDateString() !== new Date().toDateString()) return d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
@@ -312,26 +373,19 @@ const NOT_READ = {
 let listed = 0;
 let shownFile = null;
 
-async function openFiles() {
-  $('files').hidden = false;
+async function openLibrary() {
   showList();
   await listFiles(0);
   // She has seen what is new.
   api('/api/files/seen', {}).then((r) => render(r.state)).catch(() => {});
 }
 
-function closeFiles() {
-  $('files').hidden = true;
-  $('fileShow').textContent = ''; // stops any music or video
-  shownFile = null;
-}
-
 function showList() {
-  $('fileShow').textContent = '';
+  reading(false);
   shownFile = null;
   $('fileList').hidden = false;
   $('fileView').hidden = true;
-  for (const id of ['fileAsk', 'fileOpen', 'fileBack']) $(id).hidden = true;
+  restage();
 }
 
 async function listFiles(offset) {
@@ -361,6 +415,7 @@ async function listFiles(offset) {
   $('filesMore').hidden = listed >= r.n;
 }
 
+// One file, open in the panel: its pages (to point at), or a player, or its words.
 async function showFile(id) {
   let d;
   try {
@@ -369,31 +424,19 @@ async function showFile(id) {
     if (err.message !== 'locked') say('这个文件找不到了。', { mood: 'worried' });
     return;
   }
+  if (open !== 'files') openPanel('files');
   shownFile = d;
   $('fileList').hidden = true;
   $('fileView').hidden = false;
+  $('fileShow').textContent = '';
+  reading(true);
+  restage();
   $('fileTitle').textContent = titleOf(d);
   $('fileMeta').textContent = [`${d.who === 'mom' ? '妈妈发给你的' : '你发给伙伴的'}${kindZh(d)}`, dayOf(d.at), d.size].filter(Boolean).join(' · ');
   const src = `/api/files/${d.id}`;
-  const show = $('fileShow');
-  show.textContent = '';
-  if (SHOWN.test(d.mime)) {
-    const img = document.createElement('img');
-    img.src = src;
-    img.alt = titleOf(d);
-    show.appendChild(img);
-  } else if (/^(audio|video)\//.test(d.mime)) {
-    const m = document.createElement(d.mime.startsWith('audio') ? 'audio' : 'video');
-    m.src = src;
-    m.controls = true;
-    m.preload = 'metadata';
-    m.playsInline = true;
-    m.addEventListener('play', () => stopSpeaking()); // the companion is quiet while it plays
-    show.appendChild(m);
-  }
+  // What she read in it, at once: its pages can take a moment to draw the first time.
   const doc = d.doc;
-  const media = show.childElementCount > 0;
-  $('fileGist').textContent = doc ? doc.forKid || doc.gist : d.status === 'read' ? d.summary : media ? '' : NOT_READ[d.status] || '';
+  $('fileGist').textContent = doc ? doc.forKid || doc.gist : d.status === 'read' ? d.summary : '';
   const list = (title, items) => {
     if (!items.length) return [];
     const h = document.createElement('h3');
@@ -415,7 +458,18 @@ async function showFile(id) {
   $('fileAsk').hidden = !doc;
   $('fileOpen').hidden = false;
   $('fileOpen').href = src;
-  $('fileBack').hidden = false;
+  const paged = await showPages(d);
+  if (shownFile !== d || open !== 'files') return; // another one was opened meanwhile, or it was closed
+  if (!paged && /^(audio|video)\//.test(d.mime)) {
+    const m = document.createElement(d.mime.startsWith('audio') ? 'audio' : 'video');
+    m.src = src;
+    m.controls = true;
+    m.preload = 'metadata';
+    m.playsInline = true;
+    m.addEventListener('play', () => stopSpeaking()); // the companion is quiet while it plays
+    $('fileShow').appendChild(m);
+  }
+  if (!paged && !$('fileShow').childElementCount && !$('fileGist').textContent) $('fileGist').textContent = NOT_READ[d.status] || '';
 }
 
 $('fileTextMore').addEventListener('click', async () => {
@@ -430,18 +484,21 @@ $('fileTextMore').addEventListener('click', async () => {
   }
 });
 
-// The companion tells her about it: she knows which file it is (it's open).
+// The companion tells her about it: she knows which file it is (it's open), and it
+// stays open, so what she talks about can be lit on its page.
 $('fileAsk').addEventListener('click', () => {
-  const title = shownFile ? titleOf(shownFile) : '';
-  closeFiles();
-  send(`《${title}》讲了什么？`);
+  if (shownFile) send(`《${titleOf(shownFile)}》讲了什么？`);
 });
 
-$('filesBtn').addEventListener('click', openFiles);
 $('filesMore').addEventListener('click', () => listFiles(listed));
 $('fileBack').addEventListener('click', showList);
-$('filesClose').addEventListener('click', closeFiles);
-$('files').addEventListener('click', (e) => e.target === $('files') && closeFiles());
+
+// Whatever she says while a page is on show goes under it (her bubble may be behind the
+// panel), and if it is about a problem there, that lights up.
+app.onSay = (line) => {
+  caption(line);
+  markFrom(line, { quick: true });
+};
 
 // Music or a video from her files is playing.
 const playing = () => [...$('fileShow').querySelectorAll('audio, video')].some((m) => !m.paused && !m.ended);
@@ -485,7 +542,7 @@ async function handle(ev) {
   }
   if (ev.type === 'say') return say(ev.line, { mood: ev.mood || null });
   if (ev.type === 'alarm') await chime();
-  if (ev.type === 'files' && !$('files').hidden && !$('fileList').hidden) listFiles(0); // a new one from Mom, while the list is open
+  if (ev.type === 'files' && open === 'files' && !$('fileList').hidden) listFiles(0); // a new one from Mom, while the list is open
   if (ev.line) {
     const p = app.state && app.state.pets[app.state.profile.pet];
     await say(ev.line, { pet: p ? `${p.name}${p.moves[1] || p.moves[0]}` : null });

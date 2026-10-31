@@ -1,7 +1,7 @@
 // HTTP routes. No framework: a small table of (method, path) → handler.
 // Pages and assets are served from web/; everything else is JSON under /api.
 
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { pipeline } from 'node:stream';
@@ -49,7 +49,7 @@ const TEXT_PAGE = 20000; // a file's words, as much at a time, on MoMo's page
 const INLINE = /^(image\/(jpeg|png|gif|webp|bmp)|audio\/[\w.+-]+|video\/[\w.+-]+|application\/pdf|text\/plain)$/;
 
 export function createHandler({
-  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, coach = null, webDir,
+  config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, coach = null, pages = null, webDir,
   tts = synthesizeStream, flashAsr = transcribeFlash, arkAsr = transcribe,
 }) {
   // Speech is made once per (voice, line): the chat route starts it as soon as the
@@ -187,6 +187,75 @@ export function createHandler({
 
   // The file itself, for her page: a picture shown, music or a video played, the rest saved.
   on('GET', '/api/files/:id', 'kid', (ctx) => fileResponse(ctx, kidFile(ctx.params.id)));
+
+  // ---- a file page by page, to look at and to point at (the viewer on both pages) ----
+
+  // How many pages it has as pictures (0: it is words only, or to play or save), and
+  // where a homework page's problems are.
+  on('GET', '/api/files/:id/pages', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    let shown = null;
+    try {
+      shown = await need(pages, '页面').count(f);
+    } catch (err) {
+      console.warn('[pages]', err.message);
+    }
+    return { pages: shown ? shown.n : 0, kind: shown ? shown.kind : null, title: titleOf(f), problems: problemsOf(f) };
+  });
+
+  on('GET', '/api/files/:id/pages/:n', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    const p = await pageOf(f, ctx.params.n);
+    return { status: 200, type: p.type, headers: { 'Cache-Control': 'private, max-age=86400' }, stream: createReadStream(p.path) };
+  });
+
+  // Someone touched a spot on a page ({ page, x, y }: x, y from 0 to 1) and asks about
+  // it (question, or "这是什么？"): she answers in her own way and says where the thing
+  // is ({ reply, box }). A homework page is helped with, not answered. It is part of the
+  // conversation: what is asked next knows what it was about.
+  on('POST', '/api/files/:id/point', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    const today = family.now().date;
+    if (store.usage(today, 'point') >= config.limits.pointPerDay) return { reply: '今天问得好多啦，明天再一起看吧。', box: null, limited: true };
+    const p = await pageOf(f, ctx.body.page);
+    store.addUsage(today, 'point');
+    if (coach && ctx.kid) coach.heard(); // she is asking: the companion won't speak up over her
+    const unit = (v) => Math.min(1, Math.max(0, Number(v) || 0));
+    const question = String(ctx.body.question || '').trim().slice(0, 100) || '这是什么？';
+    const r = await need(eyes, '看文件').pointAt({
+      image: `data:${p.type};base64,${readFileSync(p.path).toString('base64')}`,
+      x: unit(ctx.body.x),
+      y: unit(ctx.body.y),
+      question,
+      who: ctx.kid ? 'kid' : 'mom',
+      title: titleOf(f),
+      homework: Boolean(f.result && f.result.kind === 'homework_page'),
+    });
+    if (!r.reply) throw new HttpError(502, '这里我没看清');
+    speech(r.reply);
+    brain.remember(ctx.kid ? 'kid' : 'mom', `（指着《${titleOf(f)}》第 ${p.n} 页上的一处）${question}`, r.reply);
+    return { reply: r.reply, box: r.box, page: p.n };
+  });
+
+  // Where on a page what was asked or said is, to mark it ({ page, text } → { box }). A
+  // homework page's "第三题" is known from reading it; anything else is looked for on
+  // the page, unless quick: only what is known at once.
+  on('POST', '/api/files/:id/find', 'kid', async (ctx) => {
+    const f = viewable(ctx, ctx.params.id);
+    const text = String(ctx.body.text || '').slice(0, 300);
+    const known = problemIn(f, text);
+    if (known) return { box: known.box, n: known.n };
+    if (ctx.body.quick || !text.trim()) return { box: null };
+    const today = family.now().date;
+    if (store.usage(today, 'find') >= config.limits.findPerDay) return { box: null, limited: true };
+    const p = await pageOf(f, ctx.body.page);
+    store.addUsage(today, 'find');
+    const box = await need(eyes, '看文件').findOnPage({ image: `data:${p.type};base64,${readFileSync(p.path).toString('base64')}`, text }).catch((err) => {
+      console.warn('[find]', err.message);
+      return null;
+    });
+    return { box };
+  });
 
   // The tablet's answer to a check-in: { image: JPEG base64, wav?: base64, error? }.
   on('POST', '/api/checks/:id', 'kid', (ctx) => {
@@ -565,6 +634,45 @@ export function createHandler({
     };
   }
 
+  // A file the page asking may look at: MoMo's page, hers and the ones Mom shared;
+  // Mom's, any.
+  function viewable(ctx, id) {
+    if (ctx.kid) return kidFile(id);
+    const f = store.getFile(Number(id));
+    if (!f) throw new HttpError(404, '这个文件已经删除了');
+    return f;
+  }
+
+  // Page n of a file, drawn: { path, type, n }.
+  async function pageOf(f, n) {
+    const shown = await need(pages, '页面').count(f);
+    const k = Math.round(Number(n) || 1);
+    if (!shown || k < 1 || k > shown.n) throw new HttpError(404, '没有这一页');
+    return { ...(await pages.page(f, k)), n: k };
+  }
+
+  // What to call a file: the title she read in it, else its name.
+  function titleOf(f) {
+    const r = f.result || {};
+    if (r.doc && r.doc.title) return r.doc.title;
+    if (r.kind === 'homework_page' && r.page) return `${r.page.subject || ''}作业`;
+    return (f.name || '').replace(/\.[a-z0-9]{1,8}$/i, '') || (f.kind === 'photo' ? '照片' : '文件');
+  }
+
+  // A homework page's problems with their places on it: [{ n, box }].
+  function problemsOf(f) {
+    const page = f.result && f.result.kind === 'homework_page' && f.result.page;
+    return page ? page.problems.filter((p) => p.box).map((p) => ({ n: p.n, box: p.box })) : [];
+  }
+
+  // The problem a line is about ("第三题", "第3题"), if the page has it.
+  function problemIn(f, text) {
+    const m = /第\s*([0-9]+|[一二两三四五六七八九十]+)\s*[道个]?(?:小)?题/.exec(text);
+    if (!m) return null;
+    const n = numberOf(m[1]);
+    return problemsOf(f).find((p) => numberOf(p.n) === n) || null;
+  }
+
   // A file MoMo may see: hers, or one Mom shared with her.
   function kidFile(id) {
     const f = store.getFile(Number(id));
@@ -825,4 +933,16 @@ function readJson(req, limit) {
     });
     req.on('error', reject);
   });
+}
+
+// 3, "3", "(3)", "三", "十二": a problem's number.
+function numberOf(v) {
+  const s = String(v);
+  const d = /[0-9]+/.exec(s);
+  if (d) return Number(d[0]);
+  const DIGIT = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  const m = /([一二两三四五六七八九])?(十)?([一二三四五六七八九])?/.exec(s);
+  if (!m || !m[0]) return null;
+  if (!m[2]) return DIGIT[m[1]] || null;
+  return (m[1] ? DIGIT[m[1]] : 1) * 10 + (m[3] ? DIGIT[m[3]] : 0);
 }

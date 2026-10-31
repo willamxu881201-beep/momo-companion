@@ -1,8 +1,9 @@
 // MoMo's files on her page (no keys needed; about a minute):
-//  - Mom sends a recording: on MoMo's tablet the 📁 button gets a red mark and the
+//  - Mom sends a recording: on MoMo's tablet the library button gets a red mark and the
 //    companion says so; the list shows it as new, from Mom; it opens and plays (the
 //    file comes in byte ranges, as players ask for it); the mark is gone once she looked;
 //  - MoMo sends a picture of her own: it is in her list too, as hers;
+//  - 图书馆 on the rail with a file open goes back to her list; again, and it closes;
 //  - the same on a phone held upright. Screenshots of each.
 // Run through run.sh: tools/browser/run.sh files
 const { chromium } = require('playwright');
@@ -63,7 +64,7 @@ const items = (page) => page.$$eval('#fileItems li button', (bs) => bs.map((b) =
   const song = await sent.json();
   expect(song.kind === 'stored', `Mom's recording is kept: ${song.line}`);
   const told = await waitSaid(pad, /妈妈给你发来了/, 20000).catch(() => null);
-  expect(/妈妈给你发来了《钢琴曲》，点文件夹就能看/.test(told || ''), `the companion tells MoMo: ${told}`);
+  expect(/妈妈给你发来了《钢琴曲》，点左边的图书馆就能看/.test(told || ''), `the companion tells MoMo: ${told}`);
   await pad.waitForSelector('#filesNew:not([hidden])', { timeout: 10000 }).catch(() => {});
   expect((await pad.textContent('#filesNew')) === '1', 'a red mark on the folder');
   await pad.screenshot({ path: `${OUT}/pad_new.png` });
@@ -72,8 +73,8 @@ const items = (page) => page.$$eval('#fileItems li button', (bs) => bs.map((b) =
   await pad.setInputFiles('#photoInput', { name: 'drawing.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') });
   await pad.waitForFunction(() => (window.__said || []).some((l) => /存好了/.test(l)), null, { timeout: 30000 }).catch(() => {});
 
-  await pad.tap('#filesBtn');
-  await pad.waitForSelector('#files:not([hidden]) #fileItems li');
+  await pad.tap('.rail [data-panel="files"]');
+  await pad.waitForSelector('#panel-files:not([hidden]) #fileItems li');
   const list = await items(pad);
   console.log(`list: ${JSON.stringify(list)}`);
   expect(list.length === 2, 'two files: one from Mom, one of hers');
@@ -100,8 +101,14 @@ const items = (page) => page.$$eval('#fileItems li button', (bs) => bs.map((b) =
   await pad.screenshot({ path: `${OUT}/pad_song.png` });
   await pad.tap('#fileBack');
   expect(await pad.isVisible('#fileList'), 'back to the list');
-  await pad.tap('#filesClose');
-  expect(await pad.isHidden('#files'), 'and closed');
+  // With a file open, 图书馆 on the rail goes back to her list too; again, and it closes.
+  await pad.locator('#fileItems button', { hasText: 'drawing' }).tap();
+  await pad.waitForSelector('#fileView:not([hidden])');
+  await pad.tap('.rail [data-panel="files"]');
+  await pad.waitForSelector('#fileList:not([hidden]) #fileItems li', { timeout: 10000 }).catch(() => {});
+  expect(await pad.isHidden('#fileView') && (await pad.isVisible('#side')), '图书馆 with a file open: back to her list');
+  await pad.tap('.rail [data-panel="files"]');
+  expect(await pad.isHidden('#side'), 'and again: closed, the right side is empty again');
   const ranged = await mom.request.get(`${BASE}/api/files/${song.fileId}`, { headers: { Range: 'bytes=0-3' } });
   expect(ranged.status() === 206 && (await ranged.body()).toString() === 'RIFF', 'the file comes in byte ranges');
 
@@ -113,12 +120,13 @@ const items = (page) => page.$$eval('#fileItems li button', (bs) => bs.map((b) =
   }));
   expect(dock.every((b) => b.right <= 400 && b.w > 30), `the dock fits the phone: ${JSON.stringify(dock)}`);
   await phone.screenshot({ path: `${OUT}/phone.png` });
-  await phone.tap('#filesBtn');
-  await phone.waitForSelector('#files:not([hidden]) #fileItems li');
+  await phone.tap('.rail [data-panel="files"]');
+  await phone.waitForSelector('#panel-files:not([hidden]) #fileItems li');
   await phone.screenshot({ path: `${OUT}/phone_list.png` });
   await phone.locator('#fileItems button', { hasText: 'drawing' }).tap();
   await phone.waitForSelector('#fileView:not([hidden])');
-  const mine = await phone.evaluate(() => ({ meta: document.getElementById('fileMeta').textContent, gist: document.getElementById('fileGist').textContent, img: Boolean(document.querySelector('#fileShow img')) }));
+  await phone.waitForFunction(() => document.getElementById('paperImg').complete, null, { timeout: 10000 }).catch(() => {});
+  const mine = await phone.evaluate(() => ({ meta: document.getElementById('fileMeta').textContent, gist: document.getElementById('fileGist').textContent, img: !document.getElementById('paperBox').hidden && document.getElementById('paperImg').naturalWidth > 0 }));
   expect(mine.img && /^你发给伙伴的/.test(mine.meta), `her picture is shown: ${JSON.stringify(mine)}`);
   await phone.screenshot({ path: `${OUT}/phone_picture.png` });
   console.log(`--- the tablet said:\n${(await said(pad)).join('\n')}`);

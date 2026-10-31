@@ -1,7 +1,9 @@
 // The kid screen on eleven screen sizes, from a small phone to a desktop: screenshots of
-// each (waking up, thinking, talking, typing, the picker), plus geometry checks: nothing
-// sticks out sideways, her face stays clear of the bubble and the panels, the pet's head
-// stays clear of the bubble, the dock is on the first screen of a phone.
+// each (waking up, thinking, talking, typing, a panel open, the picker), plus geometry
+// checks: nothing sticks out sideways, the rail fits, her face stays clear of the bubble
+// and the panels, the pet's head stays clear of the bubble, the dock is on the first
+// screen of a phone, and a panel opened from the rail sits beside her (held sideways)
+// or above the mic (upright), inside the screen.
 // Run through run.sh: tools/browser/run.sh devices  (ONLY=phone360,pura80 for a few)
 const { chromium } = require('playwright');
 const { BASE, momContext, parentState, voiceStub, bridge, watchErrors, finish } = require('./lib.cjs');
@@ -35,6 +37,7 @@ function measure() {
     const e = document.querySelector(sel);
     if (!e || e.closest('[hidden]')) return null;
     const r = e.getBoundingClientRect();
+    if (!r.width && !r.height) return null; // not shown
     return { x: Math.round(r.left), y: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) };
   };
   const out = {
@@ -43,7 +46,7 @@ function measure() {
     sy: document.documentElement.scrollHeight - document.documentElement.clientHeight,
     sideScroll: (() => { const s = document.querySelector('.side'); return s.scrollHeight - s.clientHeight; })(),
   };
-  const SEL = { bar: '.bar', girl: '#girlFig', pet: '#petFig .sprite', petSay: '#petSay', bubble: '#bubble', side: '.side', tasks: '.side .panel', love: '.love', dock: '.dock', mic: '#mic', kbd: '#kbd', type: '#typeForm', send: '#typeForm button', swap: '#swap', stage: '#stage' };
+  const SEL = { bar: '.bar', girl: '#girlFig', pet: '#petFig .sprite', petSay: '#petSay', bubble: '#bubble', side: '.side', tasks: '#panel-tasks', love: '#panel-love', dock: '.dock', mic: '#mic', kbd: '#kbd', type: '#typeForm', send: '#typeForm button', swap: '#swap', stage: '#stage', rail: '.rail', railEnd: '.rail button:last-child' };
   for (const [k, s] of Object.entries(SEL)) out[k] = R(s);
   // Her real face and outline, from the sprite manifest.
   const m = SPRITES && SPRITES[girlView.key];
@@ -61,7 +64,7 @@ function problemsOf(tag, m, portrait) {
   const area = (a) => Math.max(0, a.r - a.x) * Math.max(0, a.b - a.y);
   const inter = (a, b) => (a && b ? area({ x: Math.max(a.x, b.x), y: Math.max(a.y, b.y), r: Math.min(a.r, b.r), b: Math.min(a.b, b.b) }) : 0);
   if (m.sx > 0) p.push(`page scrolls sideways by ${m.sx}px`);
-  for (const k of ['bar', 'bubble', 'side', 'dock', 'mic', 'kbd', 'type', 'send', 'swap', 'petSay']) {
+  for (const k of ['bar', 'bubble', 'side', 'dock', 'mic', 'kbd', 'type', 'send', 'swap', 'petSay', 'rail', 'railEnd']) {
     const a = m[k];
     if (!a) continue;
     if (a.x < 0 || a.r > m.vw) p.push(`${k} sticks out sideways (${a.x}..${a.r} of ${m.vw})`);
@@ -74,7 +77,9 @@ function problemsOf(tag, m, portrait) {
     const face = m.face;
     if (m.body.x < 0 || m.body.r > m.vw || (!portrait && m.body.b > m.vh)) p.push(`girl cut off (${m.body.x}..${m.body.r} x ${m.body.y}..${m.body.b})`);
     if (m.side && (m.body.r > m.side.x && m.body.b > m.side.y && m.body.y < m.side.b) && !portrait) p.push('girl under the side column');
-    for (const k of ['bubble', 'side', 'dock', 'bar']) {
+    if (m.rail && m.rail.r > m.body.x + 2 && m.body.b > m.rail.y && m.body.y < m.rail.b && inter(m.rail, m.body) > area(m.body) * 0.02) p.push('the rail covers the girl');
+    // (Upright, a panel is opened over the lower part on purpose: her face may go behind it.)
+    for (const k of ['bubble', ...(portrait ? [] : ['side']), 'dock', 'bar']) {
       const o = inter(face, m[k]);
       if (o > area(face) * 0.04) p.push(`${k} covers ${Math.round((o / area(face)) * 100)}% of the girl's face`);
     }
@@ -83,7 +88,7 @@ function problemsOf(tag, m, portrait) {
   if (m.pet) {
     // The pet's head sits in the middle band of its frame; its feet may hide behind the bubble.
     const head = { x: m.pet.x + m.pet.w * 0.2, r: m.pet.r - m.pet.w * 0.2, y: m.pet.y + m.pet.h * 0.22, b: m.pet.y + m.pet.h * 0.62 };
-    for (const k of ['bubble', 'side', 'dock', 'petSay']) {
+    for (const k of ['bubble', ...(portrait ? [] : ['side']), 'dock', 'petSay']) {
       if (!m[k]) continue;
       const o = inter(head, m[k]);
       if (o > area(head) * 0.08) p.push(`${k} covers ${Math.round((o / area(head)) * 100)}% of the pet's head`);
@@ -93,7 +98,9 @@ function problemsOf(tag, m, portrait) {
   if (portrait && m.dock) {
     if (m.dock.b > m.vh) p.push(`dock below the first screen (${m.dock.b} > ${m.vh})`);
     if (m.bubble && m.bubble.b > m.dock.y + 8) p.push(`bubble hidden behind the dock at first sight (${m.bubble.b} > ${m.dock.y})`);
+    if (m.side && (m.side.b > m.dock.y + 2 || m.side.y < 0)) p.push(`the panel is not between the top and the mic (${m.side.y}..${m.side.b}, mic at ${m.dock.y})`);
   }
+  if (m.railEnd && m.railEnd.b > (portrait && m.dock ? m.dock.y : m.vh)) p.push(`the rail's last button is cut off (${m.railEnd.b})`);
   if (m.mic && m.mic.h < 44) p.push(`mic too small (${m.mic.h}px)`);
   if (m.rem < 13) p.push(`text too small (rem ${m.rem})`);
   return p.map((x) => `${tag}: ${x}`);
@@ -149,18 +156,22 @@ function problemsOf(tag, m, portrait) {
     await page.waitForTimeout(400);
     const m2 = await page.evaluate(measure);
     await page.screenshot({ path: `${OUT}/${d.tag}_2type.png` });
-    if (portrait) {
-      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-      await page.waitForTimeout(400);
-      await page.screenshot({ path: `${OUT}/${d.tag}_3scrolled.png` });
-    }
     await page.click('#kbd');
+    // A panel from the rail: today's tasks.
+    await page.click('.rail [data-panel="tasks"]');
+    await page.waitForTimeout(500);
+    const m3 = await page.evaluate(measure);
+    if (!m3.tasks) problems.push(`${d.tag}: the tasks panel did not open`);
+    await page.screenshot({ path: `${OUT}/${d.tag}_3panel.png` });
+    // The pet's panel, and the picker from it.
+    await page.click('.rail [data-panel="love"]');
+    await page.waitForTimeout(400);
     await page.click('#swap');
     await page.waitForTimeout(500);
     await page.screenshot({ path: `${OUT}/${d.tag}_4picker.png` });
     const pick = await page.evaluate(() => { const c = document.querySelector('#picker .sheet-card').getBoundingClientRect(); return { y: Math.round(c.top), b: Math.round(c.bottom), h: innerHeight }; });
-    report[d.tag] = { talk: m1, type: m2, pick };
-    problems.push(...problemsOf(d.tag, m1, portrait), ...problemsOf(`${d.tag}+type`, m2, portrait));
+    report[d.tag] = { talk: m1, type: m2, panel: m3, pick };
+    problems.push(...problemsOf(d.tag, m1, portrait), ...problemsOf(`${d.tag}+type`, m2, portrait), ...problemsOf(`${d.tag}+panel`, m3, portrait));
     if (pick.y < 0 || pick.b > pick.h) problems.push(`${d.tag}: picker card off screen`);
     await ctx.close();
   }
@@ -168,7 +179,7 @@ function problemsOf(tag, m, portrait) {
   for (const [tag, v] of Object.entries(report)) {
     const t = v.talk;
     const f = (a) => (a ? `${a.x},${a.y} ${a.w}x${a.h}` : '-');
-    console.log(`${tag.padEnd(13)} rem ${t.rem.toFixed(1)} girl ${f(t.girl)} pet ${f(t.pet)} bubble ${f(t.bubble)} side ${f(t.side)} dock ${f(t.dock)}`);
+    console.log(`${tag.padEnd(13)} rem ${t.rem.toFixed(1)} rail ${f(t.rail)} girl ${f(t.girl)} pet ${f(t.pet)} bubble ${f(t.bubble)} panel ${f(v.panel.side)} dock ${f(t.dock)}`);
   }
   await browser.close();
   finish([...problems, ...errors]);

@@ -19,7 +19,8 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { pdfPages } from './files.js';
-import { lookAt, readPicture, transcribe } from './vision.js';
+import { findOnPage, lookAt, pointAt, readPicture, transcribe } from './vision.js';
+import { GIRLS } from './characters.js';
 import { PART_ZH, TYPE_ZH, detect, extract, roughly, visible } from './extract.js';
 import { readDocument, searchFiles } from './docs.js';
 import { addDays, dateZh } from './dates.js';
@@ -67,9 +68,10 @@ async function inTurns(items, n, fn) {
 }
 
 export class Eyes {
-  // read, readDoc, ocr, look, pdf, text: the model calls and file readers (stand-ins in tests).
-  constructor({ family, store, files, hub, momHub, config, read = readPicture, readDoc = readDocument, ocr = transcribe, look = lookAt, pdf = pdfPages, text = extract }) {
-    Object.assign(this, { family, store, files, hub, momHub, config, read, readDoc, ocr, look, pdf, text });
+  // read, readDoc, ocr, look, pdf, text, point, find: the model calls and file readers
+  // (stand-ins in tests).
+  constructor({ family, store, files, hub, momHub, config, read = readPicture, readDoc = readDocument, ocr = transcribe, look = lookAt, pdf = pdfPages, text = extract, point = pointAt, find = findOnPage }) {
+    Object.assign(this, { family, store, files, hub, momHub, config, read, readDoc, ocr, look, pdf, text, point, find });
     this.homework = null;
     this.checks = new Map();
     this.reading = new Map(); // file id -> its reading, while it goes on
@@ -164,10 +166,10 @@ export class Eyes {
     }
     const name = (f.name || '').replace(/\.[a-z0-9]{1,8}$/i, '');
     const what = kind === 'document' && r.doc ? `《${r.doc.title}》` : kind === 'homework_page' ? '一页作业' : kind === 'other' ? '一张照片' : name ? `《${name}》` : '一个文件';
-    this.hub.send({ type: 'files', proactive: true, mood: 'happy', line: `${this.kid()}，妈妈给你发来了${what}，点文件夹就能看。` });
+    this.hub.send({ type: 'files', proactive: true, mood: 'happy', line: `${this.kid()}，妈妈给你发来了${what}，点左边的图书馆就能看。` });
   }
 
-  // The models failed: kept, and Mom can have it read again (管理 → 文件).
+  // The models failed: kept, and Mom can have it read again (文件, on her page).
   failed(f, err) {
     console.error('[eyes] reading a file failed:', err.message);
     this.store.setFileStatus(f.id, 'failed');
@@ -359,9 +361,12 @@ export class Eyes {
     this.index.delete(id);
   }
 
-  // MoMo opened one of her files on her page: when she asks about "this", it's that one.
+  // MoMo opened one of her files on her page: when she asks about "this", it's that one;
+  // and a page of homework is the one she is helped with.
   open(id) {
     this.opened = { id: Number(id), at: Date.now() };
+    const f = this.store.getFile(Number(id));
+    if (f && f.result && f.result.kind === 'homework_page' && f.result.page) this.homework = { at: Date.now(), page: f.result.page, fileId: f.id };
   }
 
   // The document on MoMo's mind, while fresh: the one she opened on her page, or the one
@@ -376,6 +381,20 @@ export class Eyes {
       if (d && d.result.kind === 'document' && (d.who === 'kid' || d.shared)) return { ...d, opened: true };
     }
     return sent && sent.result.kind === 'document' ? this.document(sent.id) : null;
+  }
+
+  // ---- pointing at a page (the file viewer) ------------------------------------------
+
+  // Someone touched a spot on a page (x, y: 0…1) and asks about it: { reply, box }. A
+  // quicker model than reading: someone is waiting with a finger on the page.
+  pointAt({ image, x, y, question, who, title, homework }) {
+    const p = this.family.profile();
+    return this.point({ apiKey: this.config.arkApiKey, model: this.config.pointModel, image, x, y, question, who, kidName: p.kidName, girl: GIRLS[p.girl], title, homework });
+  }
+
+  // Where on a page what is being talked about is: a box, or null.
+  findOnPage({ image, text }) {
+    return this.find({ apiKey: this.config.arkApiKey, model: this.config.pointModel, image, text });
   }
 
   // ---- check-ins -----------------------------------------------------------------

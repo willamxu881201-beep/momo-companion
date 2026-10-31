@@ -23,6 +23,7 @@ export const app = {
   onSay: () => {}, // every line she says, whole (Mom's page keeps them in a list)
   followUp: () => false, // whether she may listen on by herself after an answer (连续对话)
   onListened: () => {}, // a turn of listening is over (the wake word listener starts again)
+  onPointed: () => listenOn(1), // she answered a touch on a page (viewer.js): MoMo may answer back
 };
 let audioCtx = null;
 let currentAudio = null;
@@ -478,6 +479,10 @@ export class Pet {
     const s = 1 + 0.1 * depth;
     this.fig.style.transform = `translate3d(${(x - G.petW / 2).toFixed(1)}px, ${(y - G.petH).toFixed(1)}px, 0) scale(${s.toFixed(3)})`;
     this.fig.style.zIndex = depth < -0.2 ? 1 : 3; // behind her, or in front
+    // Near an edge of the stage its words hang inward, so they stay on the screen.
+    const reach = G.petW * 1.1; // half the widest they get
+    this.fig.classList.toggle('east', x + reach > G.maxX + G.petW / 2);
+    this.fig.classList.toggle('west', x - reach < G.minX - G.petW / 2);
     this.body.style.transform = `translateY(${(-this.hop).toFixed(1)}px) scaleX(${this.face})`;
   }
 
@@ -892,6 +897,20 @@ addEventListener('resize', () =>
     placeBubble();
   }),
 );
+// The stage changes size without the window doing so too: a panel opens beside her, the
+// typing box makes the mic row taller. The pet's floor and her bubble follow.
+if (window.ResizeObserver) {
+  let seen = '';
+  new ResizeObserver(([e]) => {
+    const size = `${Math.round(e.contentRect.width)}x${Math.round(e.contentRect.height)}`;
+    if (size === seen) return;
+    seen = size;
+    requestAnimationFrame(() => {
+      petLife.layout();
+      placeBubble();
+    });
+  }).observe($('stage'));
+}
 
 // ---- speaking ----------------------------------------------------------------
 
@@ -1085,10 +1104,11 @@ export function placeBubble() {
   const girlFig = $('girlFig');
   const wide = matchMedia('(orientation: landscape) and (min-width: 600px)').matches;
   const st = $('stage').getBoundingClientRect();
+  const side = $('app').querySelector('.side').getBoundingClientRect(); // (none: no panel open on MoMo's page)
   const region = {
     l: Math.max(st.left, page.left + parseFloat(pad.paddingLeft)),
     t: Math.max(st.top, bar.bottom + rem * 0.5),
-    r: wide ? $('app').querySelector('.side').getBoundingClientRect().left - rem * 0.6 : page.right - parseFloat(pad.paddingRight),
+    r: !wide ? page.right - parseFloat(pad.paddingRight) : side.width ? side.left - rem * 0.6 : st.right,
     b: st.bottom,
   };
   const [mx, my] = picturePoint(girlFig, ...m.mouth);
@@ -1499,6 +1519,7 @@ export async function startListening({ follow = 0, stream = null, pre = null } =
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
     } catch {
+      if (follow) return app.onListened(); // listening on by herself: no microphone, no fuss
       $('typeForm').hidden = false;
       await say('我听不到声音，麦克风好像没打开。先打字跟我说吧。', { mood: 'worried' });
       app.onListened();

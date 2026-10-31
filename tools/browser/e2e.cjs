@@ -96,6 +96,7 @@ async function draw(page, file, { chat, title, lines }) {
 
   // 1. A look at MoMo's posture.
   let n = (await said(mom)).length;
+  await mom.tap('.rail [data-panel="look"]');
   await mom.tap('button[data-check="posture"]');
   log(`mom: ${await nextSaid(mom, n)}`);
   expect(/坐姿/.test(await waitSaid(kid, /坐姿/)), 'the tablet tells MoMo first');
@@ -142,7 +143,9 @@ async function draw(page, file, { chat, title, lines }) {
   await kid.waitForTimeout(2500);
   const tasks = await kid.$$eval('#tasks .title', (t) => t.map((x) => x.textContent));
   log(`kid tasks now: ${tasks.join(' | ')}`);
-  expect(tasks.some((t) => /练习册/.test(t)), 'the homework is in MoMo\'s tasks');
+  // After 8 pm it goes to tomorrow's tasks (said with that day's date), not today's.
+  if (/\d+月\d+日/.test(added) && !added.includes(day)) log('(added to tomorrow, as it is after 8 pm: not among today\'s tasks)');
+  else expect(tasks.some((t) => /练习册/.test(t)), 'the homework is in MoMo\'s tasks');
   await mom.waitForTimeout(800);
   await mom.screenshot({ path: `${OUT}/3_mom_homework.png` });
 

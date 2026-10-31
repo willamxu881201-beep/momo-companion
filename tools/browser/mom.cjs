@@ -116,6 +116,7 @@ async function waitPush(test, ms) {
 
   // A look-in: MoMo's tablet says so, shows the camera, takes a picture. (No vision
   // model here, so Mom hears that it couldn't be read, and can open the picture.)
+  await mom.tap('.rail [data-panel="look"]');
   await mom.tap('button[data-check="posture"]');
   expect(/看看你的坐姿/.test(await waitSaid(kid, /坐姿/)), 'the tablet tells MoMo first');
   await kid.waitForSelector('#camBox:not([hidden])', { timeout: 5000 }).then(() => kid.screenshot({ path: `${OUT}/kid_1camera.png` }), () => expect(false, 'the camera view shows'));
@@ -124,6 +125,7 @@ async function waitPush(test, ms) {
   await mom.waitForTimeout(800);
   await mom.screenshot({ path: `${OUT}/mom_1look.png` });
   await mom.tap('#photoClose').catch(() => {});
+  await mom.tap('.rail [data-panel="feed"]');
   const feed = await mom.$$eval('#feed li', (li) => li.map((x) => x.textContent));
   expect(feed.some((t) => /看看坐姿/.test(t)), 'the look is in the record');
   expect((await mom.$$('#feed .thumb')).length > 0, '...with its picture');

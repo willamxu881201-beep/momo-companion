@@ -11,6 +11,8 @@ import { Auth, PARENT_COOKIE } from '../server/auth.js';
 import { Brain } from '../server/brain.js';
 import { Files } from '../server/files.js';
 import { Eyes } from '../server/eyes.js';
+import { Pages } from '../server/pages.js';
+import { box, shapeRead } from '../server/vision.js';
 import { Post } from '../server/post.js';
 import { createHandler } from '../server/http.js';
 
@@ -29,7 +31,7 @@ store.setSetting('cycle', { anchorDate: '2026-10-26', anchorDay: 1 });
 store.setCourses(1, [{ name: '数学' }]);
 const family = new Family(store, { clock: () => at });
 const auth = new Auth(store, { parentPassword: 'test-password' });
-const config = { publicUrl: '', parentPassword: 'test-password', arkApiKey: 'k', visionModel: 'v', retryMs: 0, limits: { chatPerDay: 80, asrPerDay: 150, ttsCharsPerDay: 20000, visionPerDay: 60, momChatPerDay: 80 } };
+const config = { publicUrl: '', parentPassword: 'test-password', arkApiKey: 'k', visionModel: 'v', pointModel: 'p', retryMs: 0, limits: { pointPerDay: 100, findPerDay: 200, chatPerDay: 80, asrPerDay: 150, ttsCharsPerDay: 20000, visionPerDay: 60, momChatPerDay: 80 } };
 
 // Pages that are "open": each records what was pushed to it.
 const fakeHub = () => ({ size: 1, got: [], send(e) { this.got.push(e); } });
@@ -45,6 +47,9 @@ let readArgs = null;
 let ocrCalls = 0;
 let slow = 0; // ms the document model takes
 let hiccups = 0; // times the document model fails before it works
+let pointed = null; // what she says about a touched spot, and where
+let pointArgs = null;
+let found = null; // where something is on a page
 const files = new Files(store, dataDir);
 const eyes = new Eyes({
   family, store, files, hub, momHub, config,
@@ -64,12 +69,18 @@ const eyes = new Eyes({
     ocrCalls += 1;
     return '家长会通知\n时间：11月12日 晚上7点';
   },
+  point: async (args) => {
+    pointArgs = args;
+    return pointed;
+  },
+  find: async () => found,
 });
+const pages = new Pages(files);
 const post = new Post({ family, store, hub, momHub });
 const brain = new Brain(family, { apiKey: 'k' });
 brain.attach({ eyes, post, hub, momHub });
 
-const server = createServer(createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, webDir }));
+const server = createServer(createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, pages, webDir }));
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -469,7 +480,7 @@ test("MoMo's page shows her files and what Mom shared with her; Mom's own papers
   hub.got.length = 0;
   const song = await (await mom.post('/api/upload?name=钢琴曲.mp3', Buffer.concat([Buffer.from('ID3'), Buffer.alloc(300, 1)]), 'audio/mpeg')).json();
   assert.equal(song.kind, 'stored');
-  assert.deepEqual(hub.got.find((e) => e.type === 'files'), { type: 'files', proactive: true, mood: 'happy', line: 'MoMo，妈妈给你发来了《钢琴曲》，点文件夹就能看。' });
+  assert.deepEqual(hub.got.find((e) => e.type === 'files'), { type: 'files', proactive: true, mood: 'happy', line: 'MoMo，妈妈给你发来了《钢琴曲》，点左边的图书馆就能看。' });
   assert.equal((await (await kid.get('/api/state')).json()).files.fresh, 1);
   assert.deepEqual((await kidList()).filter((f) => f.fresh).map((f) => f.name), ['钢琴曲.mp3']);
   assert.equal((await (await kid.post('/api/files/seen', {})).json()).state.files.fresh, 0, 'she has looked');
@@ -542,3 +553,82 @@ test('a file bigger than the server takes is turned away, and nothing of it is l
   delete config.limits.uploadBytes;
 });
 
+
+// ---- a file page by page: looking, pointing, marking -------------------------------
+
+test('a page of homework: its problems are marked where they are, "第三题" at once; touching a spot, she answers and says where', async () => {
+  picture = {
+    kind: 'homework_page', summary: '数学练习', unsure: '', timetable: null, homework: [],
+    page: { subject: '数学', hint: '', problems: [{ n: '1', text: '48×6=', done: '', box: [62, 145, 351, 175] }, { n: '(3)', text: '把蛋糕平均分成4份，每份是几分之几？', done: '1/4', box: [62, 353, 439, 459] }] },
+  };
+  const hw = await (await kid.post('/api/upload?name=hw.jpg', jpeg(), 'image/jpeg')).json();
+  assert.deepEqual(await (await kid.get(`/api/files/${hw.fileId}/pages`)).json(), {
+    pages: 1, kind: 'photo', title: '数学作业', problems: [{ n: '1', box: [62, 145, 351, 175] }, { n: '(3)', box: [62, 353, 439, 459] }],
+  });
+  const pic = await kid.get(`/api/files/${hw.fileId}/pages/1`);
+  assert.equal(pic.headers.get('content-type'), 'image/jpeg');
+  assert.deepEqual(Buffer.from(await pic.arrayBuffer()), jpeg());
+  assert.equal((await kid.get(`/api/files/${hw.fileId}/pages/2`)).status, 404);
+
+  // The problem being talked about is known from reading the page.
+  const find = (body) => kid.post(`/api/files/${hw.fileId}/find`, { page: 1, ...body }).then((r) => r.json());
+  assert.deepEqual(await find({ text: '第三题怎么做呀？' }), { box: [62, 353, 439, 459], n: '(3)' });
+  assert.deepEqual(await find({ text: '我们先看第1题。', quick: true }), { box: [62, 145, 351, 175], n: '1' });
+  assert.deepEqual(await find({ text: '这一页好难', quick: true }), { box: null }, 'quick: only what is known at once');
+  found = [100, 120, 300, 200];
+  assert.deepEqual(await find({ text: '蛋糕在哪里' }), { box: [100, 120, 300, 200] }, 'anything else is looked for on the page');
+
+  // Touching a spot: she answers (helping, not answering), says where, and remembers it.
+  pointed = { reply: '这是第三题，说的是把蛋糕平均分。分成4份，每份是多少呀？', box: [62, 353, 439, 459] };
+  const r = await (await kid.post(`/api/files/${hw.fileId}/point`, { page: 1, x: 0.3, y: 0.383 })).json();
+  assert.deepEqual(r, { reply: pointed.reply, box: pointed.box, page: 1 });
+  assert.deepEqual([pointArgs.x, pointArgs.y, pointArgs.question, pointArgs.who, pointArgs.homework, pointArgs.title], [0.3, 0.383, '这是什么？', 'kid', true, '数学作业']);
+  assert.match(pointArgs.image, /^data:image\/jpeg;base64,/);
+  assert.equal(pointArgs.model, 'p', 'the quick model');
+  const said = brain.history('kid').slice(-2);
+  assert.deepEqual(said.map((m) => m.content), ['（指着《数学作业》第 1 页上的一处）这是什么？', pointed.reply]);
+  // Opening it makes it the homework she is helped with.
+  await kid.get(`/api/files/${hw.fileId}/card`);
+  assert.equal(eyes.currentHomework().subject, '数学');
+});
+
+test('a document is drawn page by page (LibreOffice, then poppler), once; MoMo sees only her pages, Mom all', async () => {
+  reading = { ...notice };
+  const doc = await (await mom.post('/api/upload?name=通知.docx', fixture('notice.docx'), DOCX)).json();
+  const shown = await (await kid.get(`/api/files/${doc.fileId}/pages`)).json();
+  assert.equal(shown.kind, 'pages');
+  assert.ok(shown.pages >= 1);
+  const page = await kid.get(`/api/files/${doc.fileId}/pages/1`);
+  assert.equal(page.status, 200);
+  assert.deepEqual([...Buffer.from(await page.arrayBuffer()).subarray(0, 3)], [0xff, 0xd8, 0xff], 'a JPEG');
+  const drawn = join(dataDir, 'files', 'pages', String(doc.fileId));
+  assert.deepEqual(readdirSync(drawn).sort(), ['1.jpg', 'doc.pdf']);
+  assert.equal((await kid.get(`/api/files/${doc.fileId}/pages/1`)).status, 200, 'the second time from what was drawn');
+
+  // A PDF is drawn as it is; words-only files have no pages.
+  reading = { ...notice, doc: { ...notice.doc, title: '家长会通知' } };
+  const pdf = await (await mom.post('/api/upload?name=家长会.pdf', fixture('notice.pdf'), 'application/pdf')).json();
+  assert.equal((await (await kid.get(`/api/files/${pdf.fileId}/pages`)).json()).kind, 'pages');
+  const story = store.listUploads({ limit: 100 }).find((f) => f.name === 'story.txt');
+  assert.deepEqual((await (await mom.get(`/api/files/${story.id}/pages`)).json()).pages, 0);
+
+  // Mom's own papers: not for MoMo's eyes, here either; Mom can look at them.
+  const plan = store.listUploads({ limit: 100 }).find((f) => f.name === '计划.txt');
+  assert.equal((await kid.get(`/api/files/${plan.id}/pages`)).status, 404);
+  assert.equal((await kid.post(`/api/files/${plan.id}/point`, { page: 1, x: 0.5, y: 0.5 })).status, 404);
+  assert.equal((await mom.get(`/api/files/${plan.id}/pages`)).status, 200);
+
+  // When the file goes, its drawn pages go with it.
+  await mom.post(`/api/parent/files/${doc.fileId}/delete`, {});
+  assert.throws(() => readdirSync(drawn));
+});
+
+test("places the model gives on a picture are checked: thousandths, the right way round, not specks", () => {
+  assert.deepEqual(box([62, 353, 439, 459]), [62, 353, 439, 459]);
+  assert.deepEqual(box(['5', '5', 2000, 900.4]), [5, 5, 1000, 900]);
+  assert.equal(box([10, 10, 12, 400]), null, 'too thin');
+  assert.equal(box([1, 2, 3]), null);
+  assert.equal(box(null), null);
+  const page = shapeRead({ kind: 'homework_page', page: { subject: '数学', problems: [{ n: '1', text: '1+1=', box: [10, 20, 300, 80] }, { n: '2', text: '2+2=', box: 'here' }] } }).page;
+  assert.deepEqual(page.problems.map((p) => p.box), [[10, 20, 300, 80], null]);
+});

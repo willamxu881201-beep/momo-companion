@@ -200,7 +200,6 @@ $('tabs').addEventListener('click', (e) => {
   if (!b) return;
   for (const x of $('tabs').querySelectorAll('button')) x.setAttribute('aria-selected', String(x === b));
   for (const t of document.querySelectorAll('#admin .tab')) t.hidden = t.id !== `tab-${b.dataset.tab}`;
-  if (b.dataset.tab === 'files') refreshFiles();
 });
 
 // ---- all the files ------------------------------------------------------------------
@@ -212,7 +211,7 @@ const sizeZh = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math
 let library = { q: '', files: [], n: 0, bytes: 0 };
 
 export async function refreshFiles(more = false) {
-  if ($('tab-files').hidden && !more) return;
+  if ($('panel-files').hidden && !more) return; // (the 文件 panel on Mom's page)
   const q = $('fileQuery').value.trim();
   try {
     const r = await api(`/api/parent/library?q=${encodeURIComponent(q)}&offset=${more ? library.files.length : 0}`);
@@ -222,7 +221,7 @@ export async function refreshFiles(more = false) {
     return;
   }
   const kid = (S && S.profile.kidName) || '孩子';
-  $('fileStats').textContent = `一共 ${library.n} 个文件，占用 ${sizeZh(library.bytes)}${library.q ? `；「${library.q}」找到 ${library.files.length} 个` : ''}`;
+  $('fileStats').textContent = library.n ? `一共 ${library.n} 个文件，占用 ${sizeZh(library.bytes)}${library.q ? `；「${library.q}」找到 ${library.files.length} 个` : ''}` : '';
   $('fileList').replaceChildren(
     ...(library.files.length
       ? library.files.map((f) => {

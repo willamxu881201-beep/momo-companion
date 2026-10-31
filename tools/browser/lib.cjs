@@ -95,4 +95,25 @@ function finish(problems) {
   if (problems.length) process.exitCode = 1;
 }
 
-module.exports = { BASE, momContext, parentState, kidLink, voiceStub, said, waitSaid, nextSaid, bridge, watchErrors, setVisible, finish };
+// A page of homework, drawn here as a picture (made-up problems, as text): 900 x 1200.
+// Its problems are where viewer.cjs says they are.
+const HOMEWORK = `<!doctype html><meta charset="utf-8"><style>
+body { margin: 0; width: 900px; height: 1200px; background: #fbfaf5; font-family: "Noto Sans SC", sans-serif; color: #222; }
+h1 { font-size: 34px; text-align: center; margin: 40px 0 10px; } .p { position: absolute; font-size: 26px; line-height: 1.7; }
+</style><h1>三年级数学 第七单元 练习</h1>
+<div class="p" style="left:60px; top:170px">1. 计算：48 × 6 = 288</div>
+<div class="p" style="left:60px; top:260px">2. 一箱苹果有 24 个，5 箱一共有多少个？<br>答：____ 个</div>
+<div class="p" style="left:60px; top:420px; width:360px">3. 把一个蛋糕平均分成 4 份，<br>每份是它的几分之几？<br>答：1/4</div>
+<div class="p" style="left:480px; top:420px; width:360px">4. 比较大小：<br>1/3 ○ 1/5<br>2/7 ○ 5/7</div>
+<div class="p" style="left:60px; top:640px">5. 小明有 36 本书，送给同学 1/4，<br>还剩多少本？<br>答：____ 本</div>
+<div class="p" style="left:60px; top:840px">6. 画一画：在下面的长方形里涂出它的 3/8。<br><svg width="400" height="120"><rect x="10" y="10" width="380" height="100" fill="none" stroke="#333" stroke-width="2"/></svg></div>`;
+
+async function homeworkPage(browser) {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1200 } });
+  await page.setContent(HOMEWORK);
+  const png = await page.screenshot();
+  await page.close();
+  return png;
+}
+
+module.exports = { BASE, momContext, parentState, kidLink, voiceStub, said, waitSaid, nextSaid, bridge, watchErrors, setVisible, finish, homeworkPage };

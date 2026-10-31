@@ -1,4 +1,6 @@
-/* Mom's page: the companion's page (kid.css) with Mom's things in the side column. */
+/* Mom's page: the companion's page (kid.css) with Mom's things in the panel the rail
+   opens: on the right, or below her on a phone. One is always open (the day's record to
+   begin with). */
 
 /* Login: a frosted card like the rest. */
 .cover-card input { display: block; width: 100%; margin: 1rem 0 0.8rem; font: inherit; font-size: 1.15rem; padding: 0.7rem 0.9rem;
@@ -7,7 +9,34 @@
   background: var(--accent); color: var(--accent-ink); }
 .cover-card .msg { margin-top: 0.6rem; min-height: 1.4em; font-size: 1rem; }
 
-.bar .manage { margin-left: auto; padding: 0.35rem 1rem; font-size: 1rem; flex: none; }
+/* Held upright (a phone, mostly): the panel below the companion, in the page, which
+   scrolls under the pinned mic, as before. */
+@media (orientation: portrait), (max-width: 599px) {
+  body.mom #app { grid-template-rows: auto minmax(var(--stage-min), 1fr) auto auto; grid-template-areas: "bar bar" "rail stage" "side side" "dock dock"; }
+  body.mom .side { grid-area: side; position: relative; z-index: 2; left: auto; right: auto; bottom: auto; width: auto; max-height: none; }
+  body.mom .side > .panel { background: var(--glass); overflow: visible; }
+}
+@media (orientation: portrait) and (max-width: 380px) {
+  body.mom #app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "bar" "stage" "side" "dock"; }
+}
+.hint-line { margin: 0.4rem 0; font-size: 0.9rem; color: var(--ink-2); line-height: 1.5; }
+
+/* 文件: find, the list, and one open (viewer.js, as on MoMo's page). */
+.find { display: flex; gap: 0.5rem; margin-bottom: 0.3rem; }
+.find input { flex: 1 1 0; width: 0; min-width: 0; font: inherit; font-size: 1rem; padding: 0.55rem 0.8rem; border-radius: 0.75rem;
+  border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(255, 255, 255, 0.86); }
+.find button { flex: none; border: 0; border-radius: 0.75rem; padding: 0 1rem; background: var(--accent); color: var(--accent-ink); font-size: 1rem; }
+.lib { list-style: none; margin: 0.3rem 0 0.6rem; padding: 0; display: grid; gap: 0.45rem; }
+.lib li { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.7rem; border-radius: 0.9rem; background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.8); font-size: 1rem; min-width: 0; }
+.lib li.empty { background: none; border: 0; color: var(--ink-2); }
+.lib .grow { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.lib small { font-size: 0.85rem; }
+.lib .hint { color: var(--ink-2); }
+.lib button { flex: none; border: 1px solid rgba(0, 0, 0, 0.08); background: rgba(255, 255, 255, 0.9); border-radius: 999px; padding: 0.3rem 0.8rem; font-size: 0.9rem; }
+#fileMore { display: block; margin: 0 auto 0.4rem; }
+.files .share { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; font-size: 1rem; }
+.files .share input { width: 1.2rem; height: 1.2rem; }
 
 /* What was just said, in full (the bubble shows the start of a long answer). */
 .chat { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; max-height: 15rem; overflow-y: auto; overscroll-behavior: contain; }

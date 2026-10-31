@@ -1,6 +1,6 @@
 // Everything sent to the companion — photos, documents, any other file — and the
 // tablet's check-in snapshots, on disk under DATA_DIR/files. What people send is kept
-// until Mom deletes it (管理 → 文件), so the companion can read it again any time; the
+// until Mom deletes it (文件, on her page), so the companion can read it again any time; the
 // snapshots go after a week (see sweep, run by the scheduler). An upload is written to
 // disk as it arrives, never held whole in memory. A PDF that is only pictures is read as
 // page images, made with poppler's pdftoppm (deploy/install.sh installs it).
@@ -105,6 +105,7 @@ export class Files {
     } catch {
       /* already gone */
     }
+    rmSync(join(this.root, 'pages', String(id)), { recursive: true, force: true }); // its pages, drawn for looking at (pages.js)
     this.store.deleteFile(id);
   }
 

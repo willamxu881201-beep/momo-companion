@@ -1,9 +1,13 @@
-// Reading pictures with Ark's vision model. Three jobs:
+// Reading pictures with Ark's vision model. Five jobs:
 //  - readPicture: a photo or file someone sent (a timetable, the teacher's homework
 //    list, a page of homework, or anything else), read into structured facts;
 //  - transcribe: the words on a page that is only a picture (a scanned PDF), as text;
 //  - lookAt: what the tablet's camera (and a few seconds of sound) shows when Mom
-//    looks in on MoMo: what she is doing, whether she is at the piano, how she sits.
+//    looks in on MoMo: what she is doing, whether she is at the piano, how she sits;
+//  - pointAt: someone touched a spot on a page in the file viewer and asks about it;
+//  - findOnPage: where on a page the thing being talked about is, to mark it.
+// Places on a picture are boxes [x1, y1, x2, y2] in thousandths of its width and height
+// (top left 0,0; bottom right 1000,1000), as the model gives them.
 // Answers come in JSON, checked here so the rest of the server can trust their shape.
 // (docs.js reads documents' text into the same shapes.)
 
@@ -25,6 +29,15 @@ export function parseJson(content) {
 }
 
 const imagePart = (dataUrl) => ({ type: 'image_url', image_url: { url: dataUrl } });
+const PLACE = '千分比坐标：图的左上角是 (0,0)，右下角是 (1000,1000)';
+
+// A place on a picture as the model gave it, checked: [x1, y1, x2, y2] in thousandths,
+// or null.
+export function box(b) {
+  if (!Array.isArray(b) || b.length !== 4 || !b.every((v) => Number.isFinite(Number(v)))) return null;
+  const [x1, y1, x2, y2] = b.map((v) => Math.min(1000, Math.max(0, Math.round(Number(v)))));
+  return x2 - x1 >= 5 && y2 - y1 >= 5 ? [x1, y1, x2, y2] : null;
+}
 
 // What a timetable, a homework list and a page of homework read into (pictures here,
 // documents' text in docs.js), and how to tell them apart.
@@ -50,9 +63,11 @@ const READ_PROMPT = ({ kid, today, tomorrow }) =>
     ...READ_RULES({ today, tomorrow }),
     '- 不是这三种就是 other。',
     '- 只填和 kind 对应的那一项，其余写空对象或空数组。看不清的字不要猜。',
+    `- homework_page 的每道题再加一项 "box":[x1,y1,x2,y2]：这道题（题目和作答的地方）在图上的位置，${PLACE}。`,
   ].join('\n');
 
-// images: data: URLs (one per page). Returns { kind, summary, timetable, homework, page, unsure }.
+// images: data: URLs (one per page). Returns { kind, summary, timetable, homework, page, unsure }
+// (a problem's box only when there was one picture: where it is on it).
 export async function readPicture({ apiKey, model, images, kidName = '孩子', today, tomorrow }) {
   const r = await arkChat({
     apiKey,
@@ -62,7 +77,9 @@ export async function readPicture({ apiKey, model, images, kidName = '孩子', t
     timeoutMs: 60000,
     messages: [{ role: 'user', content: [...images.map(imagePart), { type: 'text', text: READ_PROMPT({ kid: kidName, today, tomorrow }) }] }],
   });
-  return shapeRead(parseJson(r.content));
+  const out = shapeRead(parseJson(r.content));
+  if (out.page && images.length > 1) out.page.problems.forEach((p) => delete p.box);
+  return out;
 }
 
 // The model's reading, checked: kind is timetable, homework_list, homework_page or
@@ -99,7 +116,7 @@ export function shapeRead(j) {
     out.page = {
       subject: str(j.page.subject, 8),
       problems: (Array.isArray(j.page.problems) ? j.page.problems : [])
-        .map((p) => ({ n: str(p.n, 8), text: str(p.text, 200), done: str(p.done, 40) }))
+        .map((p) => ({ n: str(p.n, 8), text: str(p.text, 200), done: str(p.done, 40), box: box(p.box) }))
         .filter((p) => p.text)
         .slice(0, 20),
       hint: str(j.page.hint, 200),
@@ -161,4 +178,58 @@ export async function lookAt({ apiKey, model, image, wav, what = 'look', kidName
     },
     summary: str(j.summary, 60),
   };
+}
+
+// Someone touched a spot on a page in the file viewer (x, y: 0…1 of its width and
+// height) and asks about it. She answers in her own way, and says where on the page
+// the thing she talks about is: { reply, box }. who: 'kid' (8 years old; a homework
+// page is helped with, not answered) or 'mom'.
+export async function pointAt({ apiKey, model, image, x, y, question = '这是什么？', who = 'kid', kidName = '孩子', girl, title = '', homework = false }) {
+  const asker = who === 'kid' ? `8 岁的${kidName}` : `${kidName}的妈妈`;
+  const r = await arkChat({
+    apiKey,
+    model,
+    json: true,
+    maxTokens: 500,
+    timeoutMs: 45000,
+    messages: [{
+      role: 'user',
+      content: [
+        imagePart(image),
+        {
+          type: 'text',
+          text: [
+            `你是「${girl.name}」，${girl.style}。${asker}在看${title ? `《${title}》的` : ''}这一页，用手指点了图上的一个位置：(${Math.round(x * 1000)}, ${Math.round(y * 1000)})（${PLACE}），问：「${question}」`,
+            '只输出 JSON：{"reply":"你的回答","box":[x1,y1,x2,y2]}',
+            who === 'kid'
+              ? `reply 用孩子听得懂的口语，1 到 3 句，不用表情符号。${homework ? '这是作业：不说出答案，也不说出做法（比如"涂出它的 3/8"这种题，不要说"平均分成 8 份、涂 3 份"）。先照题目说这是第几题、要她做什么，再只问一个小问题，引她自己想第一步（比如问她题目里的某个数表示什么）。她已经写了答案的，告诉她对不对；不对就问一个小问题帮她找到哪里错了。' : ''}`
+              : 'reply 简洁清楚，1 到 3 句，不用表情符号。',
+            `box 是你说的那部分在图上的位置（${PLACE}）；说不清在哪就写 null。`,
+          ].join('\n'),
+        },
+      ],
+    }],
+  });
+  const j = parseJson(r.content);
+  return { reply: str(j.reply, 300), box: box(j.box) };
+}
+
+// Where on a page the thing being talked about is (text: what was asked, or said), to
+// mark it: [x1, y1, x2, y2] in thousandths, or null when it isn't on the page.
+export async function findOnPage({ apiKey, model, image, text }) {
+  const r = await arkChat({
+    apiKey,
+    model,
+    json: true,
+    maxTokens: 120,
+    timeoutMs: 30000,
+    messages: [{
+      role: 'user',
+      content: [
+        imagePart(image),
+        { type: 'text', text: `下面这句话说的是图上的哪一部分？「${String(text).slice(0, 200)}」\n只输出 JSON：{"box":[x1,y1,x2,y2]}，${PLACE}；图上没有相关的地方就输出 {"box":null}。` },
+      ],
+    }],
+  });
+  return box(parseJson(r.content).box);
 }

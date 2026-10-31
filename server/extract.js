@@ -673,6 +673,11 @@ async function pdfText(buf, run) {
   return { text: pages.map((p, i) => `【第${i + 1}页】\n${p.replace(/[ \t]{3,}/g, '  ')}`).join('\n'), parts: pages.length };
 }
 
+// A document as a PDF, to be drawn page by page (pages.js). type: what it is (docx…).
+export function toPdf(buf, type, run = execFile) {
+  return convert(run, buf, type, 'pdf');
+}
+
 // An old-format document turned into its new format by LibreOffice (deploy/install.sh
 // installs it), one at a time: it takes a few seconds and a few hundred MB to run.
 let converting = Promise.resolve();

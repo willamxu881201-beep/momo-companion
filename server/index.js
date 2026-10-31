@@ -9,6 +9,7 @@ import { Brain } from './brain.js';
 import { Auth } from './auth.js';
 import { Hub, Scheduler } from './events.js';
 import { Files } from './files.js';
+import { Pages } from './pages.js';
 import { Eyes } from './eyes.js';
 import { Post } from './post.js';
 import { Notify } from './notify.js';
@@ -48,7 +49,8 @@ const coach = new Coach({ family, hub, momHub, say: (what) => brain.speakUp(what
 new Scheduler(family, hub, { coach, post, files }).start();
 eyes.resume(); // files that were still being read when the server last stopped
 
-const handler = createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, notify, coach, webDir: join(root, 'web') });
+const pages = new Pages(files);
+const handler = createHandler({ config, store, family, brain, auth, hub, momHub, files, eyes, post, notify, coach, pages, webDir: join(root, 'web') });
 const server = createServer(handler);
 server.requestTimeout = 30 * 60000; // a big file over a slow phone line
 server.listen(config.port, config.host, () => {

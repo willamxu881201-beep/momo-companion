@@ -59,16 +59,69 @@
     <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
   </section>
 
-  <aside class="side">
-    <div class="panel glass">
-      <h2>今天要做的事</h2>
+  <!-- The rail: what she can open beside the companion. Each opens its panel on the
+       right (on a phone, over the lower part); the right side is empty otherwise. -->
+  <nav class="rail" aria-label="功能">
+    <button class="ghost glass round" type="button" data-panel="tasks" aria-label="今天要做的事" title="今天要做的事"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5h10.5M9.5 12h10.5M9.5 17.5h10.5"/><path d="M3.5 6.6l1.4 1.4 2.4-2.8M3.5 12.1l1.4 1.4 2.4-2.8M3.5 17.6l1.4 1.4 2.4-2.8"/></svg></button>
+    <button class="ghost glass round" type="button" data-panel="files" aria-label="图书馆" title="图书馆"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.6C10.2 5.1 7.6 4.6 4 4.9v13.4c3.6-.3 6.2.2 8 1.7 1.8-1.5 4.4-2 8-1.7V4.9c-3.6-.3-6.2.2-8 1.7z"/><path d="M12 6.6v13.4"/></svg><b id="filesNew" class="badge" hidden></b></button>
+    <button class="ghost glass round" type="button" data-panel="love" aria-label="好感度" title="好感度"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19.6s-7-4.3-8.6-8.5C2.2 7.9 4.2 4.8 7.4 4.8c1.9 0 3.4 1 4.6 2.6 1.2-1.6 2.7-2.6 4.6-2.6 3.2 0 5.2 3.1 4 6.3-1.6 4.2-8.6 8.5-8.6 8.5z"/></svg></button>
+  </nav>
+
+  <aside class="side" id="side">
+    <section id="panel-tasks" class="panel glass" hidden>
+      <div class="panel-top"><h2>今天要做的事</h2><button class="x" type="button" data-close aria-label="关上"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
       <ul id="tasks" class="tasks"></ul>
-    </div>
-    <div class="panel glass love">
-      <div class="love-row"><b id="petName"></b><span id="stageName" class="tag"></span><button id="swap" class="ghost small" type="button">换伙伴</button></div>
+    </section>
+
+    <!-- 图书馆: her files and what Mom sent for her; one opens here to look at, and to
+         point at: a touch on the page asks the companion what is there. -->
+    <section id="panel-files" class="panel glass files" hidden>
+      <div id="fileList">
+        <div class="panel-top"><h2>图书馆</h2><button class="x" type="button" data-close aria-label="关上"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
+        <p id="filesNone" class="files-none" hidden>还没有文件。妈妈发给你的、你发给伙伴的，都会放在这里。</p>
+        <ul id="fileItems" class="file-items"></ul>
+        <button id="filesMore" class="ghost" type="button" hidden>再看更早的</button>
+      </div>
+      <div id="fileView" class="viewer" hidden>
+        <div class="panel-top">
+          <button id="fileBack" class="x" type="button" aria-label="回到图书馆"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg></button>
+          <h2 id="fileTitle"></h2>
+          <button id="paperZoom" class="x" type="button" aria-label="放大" aria-pressed="false" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M10.5 7.8v5.4M7.8 10.5h5.4"/></svg></button>
+          <button class="x" type="button" data-close aria-label="关上"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+        </div>
+        <p id="fileMeta" class="file-meta"></p>
+        <div id="paperBox" class="paper-box" hidden>
+          <div id="paper" class="paper"><img id="paperImg" alt=""><div id="marks" class="marks"></div></div>
+        </div>
+        <div id="pager" class="pager" hidden>
+          <button id="pagePrev" class="ghost" type="button">上一页</button>
+          <span id="pageNo"></span>
+          <button id="pageNext" class="ghost" type="button">下一页</button>
+        </div>
+        <p id="pointHint" class="point-hint" hidden></p>
+        <div id="fileShow" class="file-show"></div>
+        <p id="fileGist" class="file-gist"></p>
+        <div id="fileMore" class="file-more"></div>
+        <details id="fileWords" class="file-words" hidden>
+          <summary>看原文</summary>
+          <div id="fileText" class="file-text"></div>
+          <button id="fileTextMore" class="ghost" type="button" hidden>接着看</button>
+        </details>
+        <div class="row">
+          <button id="fileAsk" type="button" hidden>讲给我听</button>
+          <a id="fileOpen" class="ghost" href="#" target="_blank" rel="noopener" hidden>打开原文件</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-love" class="panel glass love" hidden>
+      <div class="panel-top"><h2>好感度</h2><button class="x" type="button" data-close aria-label="关上"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div>
+      <img id="lovePet" class="love-pet" alt="">
+      <div class="love-row"><b id="petName"></b><span id="stageName" class="tag"></span></div>
       <div class="meter"><i id="meterFill"></i></div>
-      <span id="loveText" class="love-text"></span>
-    </div>
+      <p id="loveText" class="love-text"></p>
+      <button id="swap" class="ghost" type="button">换伙伴</button>
+    </section>
   </aside>
 
   <div class="dock">
@@ -80,7 +133,6 @@
     <div class="talk">
       <button id="mic" class="mic" type="button">按一下说话</button>
       <button id="photoBtn" class="ghost glass round" type="button" aria-label="发照片或文件给伙伴看" title="发照片或文件"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4.5M7 9.5l5-5 5 5M4.5 14.5v3a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5v-3"/></svg></button>
-      <button id="filesBtn" class="ghost glass round" type="button" aria-label="我的文件" title="我的文件"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg><b id="filesNew" class="badge" hidden></b></button>
       <button id="kbd" class="ghost glass round" type="button" aria-label="打字" title="打字"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12.5" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M6.5 14.5h.01M17.5 14.5h.01M9.5 14.5h5"/></svg></button>
       <input id="photoInput" type="file" hidden>
     </div>
@@ -102,36 +154,6 @@
     <h2>没有事的时候，在哪儿玩</h2>
     <div id="pickScenes" class="pick places"></div>
     <button id="pickClose" class="ghost" type="button">好啦</button>
-  </div>
-</div>
-
-<!-- Her files: what she sent the companion, and what Mom sent for her to see. -->
-<div id="files" class="sheet" hidden>
-  <div class="sheet-card files-card" role="dialog" aria-labelledby="filesTitle">
-    <section id="fileList">
-      <h2 id="filesTitle">我的文件</h2>
-      <p id="filesNone" class="files-none" hidden>还没有文件。妈妈发给你的、你发给伙伴的，都会放在这里。</p>
-      <ul id="fileItems" class="file-items"></ul>
-      <button id="filesMore" class="ghost" type="button" hidden>再看更早的</button>
-    </section>
-    <section id="fileView" hidden>
-      <h2 id="fileTitle"></h2>
-      <p id="fileMeta" class="file-meta"></p>
-      <div id="fileShow" class="file-show"></div>
-      <p id="fileGist" class="file-gist"></p>
-      <div id="fileMore" class="file-more"></div>
-      <details id="fileWords" class="file-words" hidden>
-        <summary>看原文</summary>
-        <div id="fileText" class="file-text"></div>
-        <button id="fileTextMore" class="ghost" type="button" hidden>接着看</button>
-      </details>
-    </section>
-    <div class="row">
-      <button id="fileAsk" type="button" hidden>讲给我听</button>
-      <a id="fileOpen" class="ghost" href="#" target="_blank" rel="noopener" hidden>打开原文件</a>
-      <button id="fileBack" class="ghost" type="button" hidden>返回</button>
-      <button id="filesClose" class="ghost" type="button">关上</button>
-    </div>
   </div>
 </div>
 

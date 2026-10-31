@@ -67,6 +67,7 @@ async function tour(page, tag) {
 
   // MoMo taps homework and starts it: off to the study.
   const n = (await said(pad)).length;
+  await pad.tap('.rail [data-panel="tasks"]');
   await pad.locator('#tasks button', { hasText: '写作业' }).tap();
   await pad.waitForSelector('#confirm:not([hidden])');
   expect(await pad.isVisible('#confirmStart'), 'a task not begun can be started');

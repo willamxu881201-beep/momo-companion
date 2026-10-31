@@ -1,14 +1,16 @@
 // Mom's page: the same companion as MoMo's, talking with Mom. She answers questions about
 // MoMo's day, looks in on her through the tablet's camera, passes messages both ways,
 // reads photos and documents (timetables, homework, notices, score sheets…) and answers
-// from them, and keeps Mom posted as things happen. The side column holds what Mom
-// needs: today's tasks to confirm, buttons to look in, and the day's record with its
-// photos and documents. The old settings live in the 管理 sheet (admin.js).
+// from them, and keeps Mom posted as things happen. A rail on the left opens what Mom
+// needs on the right, one at a time: the day's record (to begin with), today's tasks to
+// confirm, what was just said, buttons to look in, and all the files — one opens there
+// to look at and point at (viewer.js). The settings live in the 管理 sheet (admin.js).
 
 import {
-  $, api, app, busyLabel, pick, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, stopSpeaking, wakeUp,
+  $, api, app, busyLabel, petLife, pick, placeBubble, pose, say, sendFile, setBusy, showCharacters, sleep, stopSpeaking, wakeUp,
 } from './companion.js';
 import { initAdmin, refreshAdmin, refreshFiles, renderAdmin } from './admin.js';
+import { caption, clearView, markFrom, showPages, view } from './viewer.js';
 
 app.send = send;
 app.followUp = () => Boolean(app.state && app.state.voice && app.state.voice.followUp); // 连续对话
@@ -16,11 +18,56 @@ app.onLocked = showLogin;
 app.reload = reload;
 app.pokeLines = ['妈妈好呀！', '我在呢，要我帮您看看沫沫吗？', '嘿嘿，妈妈也来戳我啦～'];
 app.bubbleMax = 36; // her answers to Mom run longer: the whole of each is in the 刚才说的 list
-app.onSay = (text) => addChat('her', text);
+app.onSay = (text) => {
+  addChat('her', text);
+  caption(text); // under a page on show, too
+};
 app.petLines = ['{p}也想妈妈啦！', '{p}在跟您打招呼呢！'];
 
 let mom = null; // /api/parent/state
 let events = null;
+
+// ---- the rail and its panels -------------------------------------------------------
+// One panel at a time on the right (below her, on a phone); the day's record to begin
+// with, and again when one is closed. (文件's button, while a file is open in it, goes
+// back to the list first; leaving it closes the file.)
+
+let open = 'feed';
+
+function openPanel(name) {
+  open = name;
+  for (const sec of $('side').children) sec.hidden = sec.id !== `panel-${name}`;
+  document.querySelectorAll('.rail [data-panel]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.panel === name)));
+  if (name !== 'files') {
+    reading(false);
+    if (!$('fileView').hidden) closeFile(); // the list, when she comes back
+  }
+  if (name === 'files' && !$('fileLib').hidden) refreshFiles();
+  restage();
+}
+
+// A file open: the panel widens to read it in, and the characters make room.
+function reading(on) {
+  document.body.classList.toggle('reading', on);
+  if (!on) clearView();
+}
+
+function restage() {
+  requestAnimationFrame(() => {
+    petLife.layout();
+    placeBubble();
+  });
+}
+
+document.querySelectorAll('.rail [data-panel]').forEach((b) =>
+  b.addEventListener('click', () => {
+    const name = b.dataset.panel;
+    if (name === 'files' && open === 'files' && !$('fileView').hidden) return showLibrary();
+    openPanel(open === name && open !== 'feed' ? 'feed' : name);
+  }),
+);
+openPanel('feed');
+new ResizeObserver(([e]) => document.documentElement.style.setProperty('--dock-h', `${Math.round(e.target.getBoundingClientRect().height)}px`)).observe(document.querySelector('.dock'));
 
 // ---- loading ------------------------------------------------------------------
 
@@ -139,8 +186,9 @@ function showPhoto(e) {
 $('photoClose').addEventListener('click', () => ($('photo').hidden = true));
 $('photo').addEventListener('click', (e) => e.target === $('photo') && ($('photo').hidden = true));
 
-// A file's card: what the companion made of it, how far reading it got, whether she may
-// talk about it with MoMo, and the file itself to save. Photos open as photos.
+// A file, open in the 文件 panel: its pages to look at and point at (a touch asks her
+// what is there), what the companion made of it, how far reading it got, whether MoMo
+// may see it, and the file itself to save.
 const READ_ZH = { reading: '正在读', stored: '存着，读不了', failed: '这次没读成' };
 let shownDoc = null;
 async function showFile(id) {
@@ -151,11 +199,12 @@ async function showFile(id) {
     if (err.message !== 'locked') say(`没打开：${err.message}`, { mood: 'worried' });
     return;
   }
-  if (d.kind === 'photo' && d.status === 'read') {
-    showPhoto({ fileId: d.id, at: d.at, text: d.summary || d.name || '照片' });
-    return;
-  }
   shownDoc = d;
+  $('fileLib').hidden = true;
+  $('fileView').hidden = false;
+  openPanel('files');
+  reading(true);
+  restage();
   const kid = app.state ? app.state.profile.kidName : '孩子';
   const doc = d.doc;
   const day = new Date(d.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
@@ -177,8 +226,22 @@ async function showFile(id) {
       : []),
   );
   $('docSave').href = `/api/parent/files/${d.id}?download=1`;
-  $('docSheet').hidden = false;
+  await showPages(d);
 }
+
+function showLibrary() {
+  closeFile();
+  refreshFiles();
+  restage();
+}
+
+function closeFile() {
+  shownDoc = null;
+  reading(false);
+  $('fileView').hidden = true;
+  $('fileLib').hidden = false;
+}
+$('fileBack').addEventListener('click', showLibrary);
 const sizeZh = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 $('docShare').addEventListener('change', async () => {
   try {
@@ -192,9 +255,8 @@ $('docDelete').addEventListener('click', async () => {
   if (!confirm(`删除《${shownDoc.name || '这个文件'}》？删除以后伙伴就读不到它了。`)) return;
   try {
     await api(`/api/parent/files/${shownDoc.id}/delete`, {});
-    $('docSheet').hidden = true;
+    showLibrary();
     reload();
-    refreshFiles();
     say('好的，删掉了。', { mood: 'happy' });
   } catch (err) {
     if (err.message !== 'locked') say(`没删成：${err.message}`, { mood: 'worried' });
@@ -203,17 +265,14 @@ $('docDelete').addEventListener('click', async () => {
 $('docReread').addEventListener('click', async () => {
   try {
     await api(`/api/parent/files/${shownDoc.id}/reread`, {});
-    $('docSheet').hidden = true;
     say('好，我再读一次，读完告诉你。', { mood: 'happy' });
   } catch (err) {
     if (err.message !== 'locked') say(`哎呀，${err.message}。`, { mood: 'worried' });
   }
 });
-$('docClose').addEventListener('click', () => ($('docSheet').hidden = true));
-$('docSheet').addEventListener('click', (e) => e.target === $('docSheet') && ($('docSheet').hidden = true));
-// Ask about it: the question box opens with the document's name already in it.
+// Ask about it: the question box opens with the document's name already in it (and the
+// file stays open, so what she talks about can be lit on its page).
 $('docAsk').addEventListener('click', () => {
-  $('docSheet').hidden = true;
   $('typeForm').hidden = false;
   $('typeText').value = `《${shownDoc && shownDoc.doc ? shownDoc.doc.title : (shownDoc && shownDoc.name) || '这个文件'}》里`;
   $('typeText').focus();
@@ -259,7 +318,7 @@ const chatLog = [];
 function addChat(who, text) {
   chatLog.push({ who, text });
   if (chatLog.length > 8) chatLog.shift();
-  $('chatPanel').hidden = false;
+  $('chatNone').hidden = true;
   $('chat').replaceChildren(...chatLog.map((m) => el('li', { class: m.who }, m.text)));
   $('chat').scrollTop = $('chat').scrollHeight;
 }
@@ -276,6 +335,7 @@ async function send(text) {
   setBusy(true, '想一想…');
   $('heard').hidden = false;
   $('heard').textContent = `你说：${text}`;
+  if (view.id) markFrom(text); // about the page on show: found there while the answer comes
   let answered = false;
   const asked = api('/api/parent/chat', { text }).finally(() => (answered = true));
   // Looking through the day can take a few seconds. If it does, she says so first,

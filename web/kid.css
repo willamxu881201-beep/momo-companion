@@ -179,7 +179,9 @@ body.quiet-time .night { opacity: 1; }
 .next:empty { display: none; }
 .ghost { border: 1px solid var(--glass-line); background: var(--glass); border-radius: 999px; padding: 0.5rem 1rem; }
 .ghost.small { padding: 0.2rem 0.75rem; font-size: 0.9rem; background: rgba(255, 255, 255, 0.7); }
-.ghost.round { width: 3.6rem; height: 3.6rem; padding: 0; font-size: 1rem; flex: none; }
+.ghost.round { width: 3.6rem; height: 3.6rem; padding: 0; font-size: 1rem; flex: none; display: grid; place-items: center; }
+/* the round buttons' pictures (send a file, her files, type): drawn lines, the same on every phone */
+.ico { width: 1.65rem; height: 1.65rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* The speech bubble: an oval of frosted glass beside her mouth, its tail pointing at
    it. kid.js sizes and places it for whichever girl is talking, on every screen;

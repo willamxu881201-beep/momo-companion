@@ -175,6 +175,7 @@ function renderCompanion(s) {
   $('hidePets').replaceChildren(h('legend', {}, '不给沫沫选的宠物'), ...Object.entries(s.pets).map(([k, p]) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: k, checked: s.hidden.pets.includes(k) }), p.name)));
   $('quietStart').value = s.quiet.start;
   $('quietEnd').value = s.quiet.end;
+  $('followUp').checked = s.voice.followUp;
   $('voices').replaceChildren(h('legend', {}, '配音音色（豆包语音 2.0 的音色 ID）'), ...Object.entries(s.girls).map(([k, g]) => h('label', {}, g.name, h('input', { value: s.voices[k], 'data-girl': k, spellcheck: 'false' }))));
   $('ttsNote').textContent = s.tts ? '豆包配音已开启。' : '服务器还没配置豆包语音的 AppID 和 Token，现在用平板自带的声音说话。';
 }
@@ -311,6 +312,7 @@ $('companionForm').addEventListener('submit', (e) => {
       pets: [...$('hidePets').querySelectorAll('input:checked')].map((i) => i.value),
     },
     quiet: { start: $('quietStart').value, end: $('quietEnd').value },
+    voice: { followUp: $('followUp').checked },
     voices,
   }, $('companionMsg'));
 });

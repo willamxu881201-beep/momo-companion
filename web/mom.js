@@ -11,6 +11,7 @@ import {
 import { initAdmin, refreshAdmin, refreshFiles, renderAdmin } from './admin.js';
 
 app.send = send;
+app.followUp = () => Boolean(app.state && app.state.voice && app.state.voice.followUp); // 连续对话
 app.onLocked = showLogin;
 app.reload = reload;
 app.pokeLines = ['妈妈好呀！', '我在呢，要我帮您看看沫沫吗？', '嘿嘿，妈妈也来戳我啦～'];

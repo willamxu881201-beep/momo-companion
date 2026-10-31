@@ -6,6 +6,8 @@ import {
 } from './companion.js';
 
 app.send = send;
+// 连续对话 (if Mom left it on), but never at quiet time: she is asleep.
+app.followUp = () => Boolean(app.state && app.state.voice && app.state.voice.followUp && !app.state.quiet);
 app.onLocked = showLocked;
 app.reload = load;
 

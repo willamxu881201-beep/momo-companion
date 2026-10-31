@@ -493,6 +493,7 @@ export function createHandler({
       if (timeToMinutes(b.quiet.start) === null || timeToMinutes(b.quiet.end) === null) throw new HttpError(400, '安静时间格式是 HH:MM');
       store.setSetting('quiet', { start: b.quiet.start, end: b.quiet.end });
     }
+    if (b.voice) store.setSetting('voice', { followUp: Boolean(b.voice.followUp) });
     if (b.voices) {
       const v = {};
       for (const k of Object.keys(GIRLS)) if (b.voices[k]) v[k] = String(b.voices[k]).trim().slice(0, 80);
@@ -546,6 +547,7 @@ export function createHandler({
       quiet: inQuiet(s.now.minutes, store.getSetting('quiet')),
       looked: lookedToday(s.now.date), // MoMo sees how often Mom looked in through the camera
       files: store.kidFileCount(store.getSetting('kidFilesSeen')), // { n, fresh }: her files, and the new ones from Mom
+      voice: store.getSetting('voice'),
     };
   }
 
@@ -612,6 +614,7 @@ export function createHandler({
       profile: store.getSetting('profile'),
       hidden: store.getSetting('hidden'),
       quiet: store.getSetting('quiet'),
+      voice: store.getSetting('voice'),
       voices: Object.fromEntries(Object.entries(GIRLS).map(([k, g]) => [k, (store.getSetting('voices') || {})[k] || g.voice])),
       girls: Object.fromEntries(Object.entries(GIRLS).map(([k, g]) => [k, { name: g.name }])),
       pets: Object.fromEntries(Object.entries(PETS).map(([k, p]) => [k, { name: p.name, kind: p.kind }])),

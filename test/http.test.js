@@ -194,3 +194,14 @@ test('the tablet is told where she is; MoMo can start a task, and choose where f
   assert.equal((await post('/api/profile', { scene: 'study' })).status, 400, 'free time is not spent in the study');
   at = new Date('2026-10-28T08:05:00Z');
 });
+
+test('连续对话 is on unless Mom turns it off, and both pages hear of it', async () => {
+  const { cookie: kid } = await openKidLink(auth.kidKey());
+  const mom = { Cookie: `${PARENT_COOKIE}=${auth.login('127.0.0.1', 'test-password').token}`, 'Content-Type': 'application/json' };
+  assert.deepEqual((await (await get('/api/state', { Cookie: kid })).json()).voice, { followUp: true });
+  const off = await fetch(`${base}/api/parent/settings`, { method: 'POST', headers: mom, body: JSON.stringify({ voice: { followUp: false } }) });
+  assert.equal(off.status, 200);
+  assert.deepEqual((await (await get('/api/state', { Cookie: kid })).json()).voice, { followUp: false });
+  assert.deepEqual((await (await get('/api/parent/state', mom)).json()).voice, { followUp: false });
+  await fetch(`${base}/api/parent/settings`, { method: 'POST', headers: mom, body: JSON.stringify({ voice: { followUp: true } }) });
+});

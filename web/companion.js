@@ -21,6 +21,7 @@ export const app = {
   petLines: ['{p}好喜欢你呀！', '{p}，别闹啦，嘻嘻～', '你看{p}多开心！', '{p}在跟你玩呢！'],
   bubbleMax: Infinity, // longest line shown whole by her mouth; longer ones are cut after a sentence
   onSay: () => {}, // every line she says, whole (Mom's page keeps them in a list)
+  followUp: () => false, // whether she may listen on by herself after an answer (连续对话)
 };
 let audioCtx = null;
 let currentAudio = null;
@@ -1477,8 +1478,16 @@ export function setBusy(on, label) {
 }
 
 // ---- listening (16 kHz mono WAV) ---------------------------------------------
+// A tap on the mic, then words, then a pause: what was said goes to the recogniser.
+// 连续对话: after she has answered words said out loud, she listens on by herself for a
+// few seconds; more words and the conversation goes on, none and she stops. A few turns
+// in a row at most, so a television can't keep her talking.
 
-export async function startListening() {
+const FOLLOW_MS = 6000; // how long she waits for more words
+const FOLLOW_TURNS = 5; // times in a row she listens on by herself
+
+// follow: which turn of listening on by herself this is (0: someone tapped the mic).
+export async function startListening({ follow = 0 } = {}) {
   stopSpeaking();
   fetch('/api/warm', { method: 'POST' }).catch(() => {}); // server opens its connections while the child talks
   let stream;
@@ -1491,7 +1500,7 @@ export async function startListening() {
   }
   const src = audioCtx.createMediaStreamSource(stream);
   const proc = audioCtx.createScriptProcessor(4096, 1, 1);
-  const r = { stream, src, proc, bufs: [], total: 0, heard: false, silentMs: 0, first: -1, last: -1, t0: Date.now(), rate: audioCtx.sampleRate };
+  const r = { stream, src, proc, bufs: [], total: 0, heard: false, silentMs: 0, first: -1, last: -1, t0: Date.now(), rate: audioCtx.sampleRate, follow };
   proc.onaudioprocess = (e) => {
     const d = e.inputBuffer.getChannelData(0);
     r.bufs.push(new Float32Array(d));
@@ -1507,16 +1516,16 @@ export async function startListening() {
     } else if (r.heard) {
       r.silentMs += (d.length / r.rate) * 1000;
     }
-    if ((r.heard && r.silentMs > 800) || Date.now() - r.t0 > 15000) stopListening();
+    if ((r.heard && r.silentMs > 800) || Date.now() - r.t0 > 15000 || (r.follow && !r.heard && Date.now() - r.t0 > FOLLOW_MS)) stopListening();
   };
   src.connect(proc);
   proc.connect(audioCtx.destination);
   app.rec = r;
-  $('bubble').classList.add('dim');
+  if (!follow) $('bubble').classList.add('dim'); // listening on, her answer stays readable
   petLife.hearMoMo();
   const mic = $('mic');
   mic.classList.add('listening');
-  mic.textContent = '说完点我';
+  mic.textContent = follow ? '还在听…' : '说完点我';
 }
 
 export async function stopListening() {
@@ -1541,12 +1550,25 @@ export async function stopListening() {
     const wav = encodeWav16k(speech, speech.reduce((n, b) => n + b.length, 0), r.rate);
     const { text } = await api('/api/asr', { wav });
     setBusy(false);
-    if (text) await app.send(text);
+    if (text) {
+      await app.send(text);
+      listenOn(r.follow + 1);
+    } else if (r.follow) petLife.release(); // a noise while she listened on: she just stops
     else await say('我没听清楚，可以再说一遍吗？', { mood: 'worried' });
   } catch (err) {
     setBusy(false);
     if (err.message !== 'locked') await say('我没听清楚，可以再说一遍吗？', { mood: 'worried' });
   }
+}
+
+// After an answer to words said out loud: once she has said it (and a breath later, so
+// she doesn't hear herself), she listens for more.
+async function listenOn(turn) {
+  if (turn > FOLLOW_TURNS || !app.followUp()) return;
+  for (let i = 0; i < 600 && (look.speaking || app.busy); i += 1) await sleep(100);
+  await sleep(350);
+  if (app.rec || app.busy || look.speaking || document.hidden || !app.followUp()) return;
+  startListening({ follow: turn });
 }
 
 function encodeWav16k(bufs, total, srcRate) {

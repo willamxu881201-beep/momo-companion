@@ -441,6 +441,68 @@ test('the companion looks things up herself: Mom in every file, MoMo in her own 
   assert.match(kidAsks('分子', '课件里分子在哪里'), /^在《lesson.pptx》里找到：\n.*分数线上面是分子/s);
 });
 
+test("MoMo's page shows her files and what Mom shared with her; Mom's own papers stay hers", async () => {
+  const kidList = async () => (await (await kid.get('/api/files')).json()).files;
+  const byName = (name) => store.listUploads({ limit: 100 }).find((f) => f.name === name);
+  const names = (await kidList()).map((f) => f.name);
+  assert.ok(names.includes('lesson.pptx'), 'her own files');
+  assert.ok(!names.includes('计划.txt'), "not Mom's work");
+  assert.ok(!names.includes('照片.zip'), 'nor what a tablet has no use for');
+  assert.ok(!names.includes('运动会通知.docx'), 'nor what Mom said no to');
+  const plan = byName('计划.txt');
+  assert.equal((await kid.get(`/api/files/${plan.id}`)).status, 404);
+  assert.equal((await kid.get(`/api/files/${plan.id}/card`)).status, 404);
+
+  // Mom sends a song: it is new on MoMo's page, and the companion tells her.
+  await kid.post('/api/files/seen', {});
+  hub.got.length = 0;
+  const song = await (await mom.post('/api/upload?name=钢琴曲.mp3', Buffer.concat([Buffer.from('ID3'), Buffer.alloc(300, 1)]), 'audio/mpeg')).json();
+  assert.equal(song.kind, 'stored');
+  assert.deepEqual(hub.got.find((e) => e.type === 'files'), { type: 'files', proactive: true, mood: 'happy', line: 'MoMo，妈妈给你发来了《钢琴曲》，点文件夹就能看。' });
+  assert.equal((await (await kid.get('/api/state')).json()).files.fresh, 1);
+  assert.deepEqual((await kidList()).filter((f) => f.fresh).map((f) => f.name), ['钢琴曲.mp3']);
+  assert.equal((await (await kid.post('/api/files/seen', {})).json()).state.files.fresh, 0, 'she has looked');
+
+  // She plays it: the player gets the part it asks for.
+  const part = await fetch(`${base}/api/files/${song.fileId}`, { headers: { Cookie: kidCookie, Range: 'bytes=0-2' } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get('content-range'), 'bytes 0-2/303');
+  assert.equal(await part.text(), 'ID3');
+
+  // Mom's photos: one of a bill stays hers; one of the park is MoMo's to see.
+  picture = { kind: 'other', summary: '一张超市的发票', unsure: '', timetable: null, homework: [], page: null };
+  const bill = await (await mom.post('/api/upload?name=bill.jpg', jpeg(), 'image/jpeg')).json();
+  assert.equal(store.getFile(bill.fileId).shared, 0);
+  hub.got.length = 0;
+  picture = { ...picture, summary: '公园里开满了花' };
+  const park = await (await mom.post('/api/upload?name=park.jpg', jpeg(), 'image/jpeg')).json();
+  assert.equal(store.getFile(park.fileId).shared, 1);
+  assert.match(hub.got.find((e) => e.type === 'files').line, /妈妈给你发来了一张照片/);
+
+  // Read again, the notice stays as Mom set it (not for MoMo). Then Mom shares it after
+  // all: new to MoMo. She opens it: its card and its words, and when she asks about
+  // "this", the companion knows which file she means.
+  const sent = byName('运动会通知.docx');
+  reading = notice;
+  await mom.post(`/api/parent/files/${sent.id}/reread`, {});
+  for (let i = 0; i < 50 && store.getFile(sent.id).status !== 'read'; i += 1) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(store.getFile(sent.id).shared, 0, 'read again, it stays as Mom set it');
+  hub.got.length = 0;
+  assert.equal((await (await mom.post(`/api/parent/files/${sent.id}/share`, { kid: true })).json()).shared, true);
+  assert.match(hub.got.find((e) => e.type === 'files').line, /妈妈给你发来了《秋季运动会通知》/);
+  const card = await (await kid.get(`/api/files/${sent.id}/card`)).json();
+  assert.equal(card.doc.forKid, '学校要开运动会啦！');
+  assert.match(card.text, /接力赛 \| 14:00/);
+  assert.equal(card.more, false);
+  const doc = brain.extras('这个文件讲了什么').document;
+  assert.deepEqual([doc.title, doc.by, doc.opened], ['秋季运动会通知', 'mom', true]);
+
+  // A web page someone sent is only ever saved, never opened as one of the site's pages.
+  const page = await (await kid.post('/api/upload?name=page.html', Buffer.from('<p>hi</p><script>alert(1)</script>'), 'text/html')).json();
+  assert.match((await kid.get(`/api/files/${page.fileId}`)).headers.get('content-disposition'), /^attachment/);
+  assert.equal((await kid.get(`/api/files/${song.fileId}`)).headers.get('content-disposition'), null, 'music plays in the page');
+});
+
 test('a file that takes long to read: the upload is answered at once, and the result comes when it is done', async () => {
   config.readWaitMs = 30;
   slow = 200;

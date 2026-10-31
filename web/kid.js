@@ -55,6 +55,10 @@ function render(s) {
   // Mom's looks through the camera are never secret: MoMo sees how many there were today.
   $('looked').hidden = !s.looked;
   if (s.looked) $('looked').textContent = `📷 妈妈今天看过 ${s.looked.n} 次 · ${s.looked.last}`;
+  // Files Mom sent that MoMo hasn't looked at yet.
+  const fresh = s.files ? s.files.fresh : 0;
+  $('filesNew').hidden = !fresh;
+  $('filesNew').textContent = fresh > 9 ? '9+' : String(fresh);
 
   const list = $('tasks');
   list.textContent = '';
@@ -269,6 +273,161 @@ $('photoInput').addEventListener('change', async () => {
   }
 });
 
+// ---- her files ----------------------------------------------------------------
+// What she sent the companion, and what Mom sent for her (new ones marked). One opens to
+// be looked at, listened to or read, and the companion can tell her about it.
+
+const iconOf = (f) => (/^audio\//.test(f.mime) ? '🎵' : /^video\//.test(f.mime) ? '🎬' : f.kind === 'photo' ? '🖼️' : f.kind === 'doc' ? '📄' : '📦');
+const titleOf = (f) => (f.doc ? f.doc.title : (f.name || '').replace(/\.[a-z0-9]{1,8}$/i, '') || '文件');
+const kindZh = (f) => (/^audio\//.test(f.mime) ? '音频' : /^video\//.test(f.mime) ? '视频' : f.typeZh ? `${f.typeZh}${f.kind === 'doc' ? '文件' : ''}` : '文件');
+const SHOWN = /^image\/(jpeg|png|gif|webp|bmp)$/; // pictures the browser shows
+function dayOf(ms) {
+  const d = new Date(ms);
+  if (d.toDateString() !== new Date().toDateString()) return d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+  return `今天 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+const NOT_READ = {
+  reading: '伙伴还在读这个文件，读完再来看看吧。',
+  failed: '伙伴这次没读成这个文件，可以点「打开原文件」看看。',
+  stored: '这个文件伙伴读不了，可以点「打开原文件」看看。',
+};
+let listed = 0;
+let shownFile = null;
+
+async function openFiles() {
+  $('files').hidden = false;
+  showList();
+  await listFiles(0);
+  // She has seen what is new.
+  api('/api/files/seen', {}).then((r) => render(r.state)).catch(() => {});
+}
+
+function closeFiles() {
+  $('files').hidden = true;
+  $('fileShow').textContent = ''; // stops any music or video
+  shownFile = null;
+}
+
+function showList() {
+  $('fileShow').textContent = '';
+  shownFile = null;
+  $('fileList').hidden = false;
+  $('fileView').hidden = true;
+  for (const id of ['fileAsk', 'fileOpen', 'fileBack']) $(id).hidden = true;
+}
+
+async function listFiles(offset) {
+  let r;
+  try {
+    r = await api(`/api/files?offset=${offset}`);
+  } catch (err) {
+    if (err.message !== 'locked') say('哎呀，文件没打开，等一下再试试。', { mood: 'worried' });
+    return;
+  }
+  if (!offset) $('fileItems').textContent = '';
+  for (const f of r.files) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.innerHTML = '<span class="icon"></span><span><span class="name"></span><span class="meta"></span></span><span class="new">新</span>';
+    b.querySelector('.icon').textContent = iconOf(f);
+    b.querySelector('.name').textContent = titleOf(f);
+    b.querySelector('.meta').textContent = `${f.who === 'mom' ? '妈妈发的' : '我发的'} · ${dayOf(f.at)}`;
+    b.querySelector('.new').hidden = !f.fresh;
+    b.addEventListener('click', () => showFile(f.id));
+    li.appendChild(b);
+    $('fileItems').appendChild(li);
+  }
+  listed = offset + r.files.length;
+  $('filesNone').hidden = r.n > 0;
+  $('filesMore').hidden = listed >= r.n;
+}
+
+async function showFile(id) {
+  let d;
+  try {
+    d = await api(`/api/files/${id}/card`);
+  } catch (err) {
+    if (err.message !== 'locked') say('这个文件找不到了。', { mood: 'worried' });
+    return;
+  }
+  shownFile = d;
+  $('fileList').hidden = true;
+  $('fileView').hidden = false;
+  $('fileTitle').textContent = titleOf(d);
+  $('fileMeta').textContent = [`${d.who === 'mom' ? '妈妈发给你的' : '你发给伙伴的'}${kindZh(d)}`, dayOf(d.at), d.size].filter(Boolean).join(' · ');
+  const src = `/api/files/${d.id}`;
+  const show = $('fileShow');
+  show.textContent = '';
+  if (SHOWN.test(d.mime)) {
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = titleOf(d);
+    show.appendChild(img);
+  } else if (/^(audio|video)\//.test(d.mime)) {
+    const m = document.createElement(d.mime.startsWith('audio') ? 'audio' : 'video');
+    m.src = src;
+    m.controls = true;
+    m.preload = 'metadata';
+    m.playsInline = true;
+    m.addEventListener('play', () => stopSpeaking()); // the companion is quiet while it plays
+    show.appendChild(m);
+  }
+  const doc = d.doc;
+  const media = show.childElementCount > 0;
+  $('fileGist').textContent = doc ? doc.forKid || doc.gist : d.status === 'read' ? d.summary : media ? '' : NOT_READ[d.status] || '';
+  const list = (title, items) => {
+    if (!items.length) return [];
+    const h = document.createElement('h3');
+    h.textContent = title;
+    const ul = document.createElement('ul');
+    for (const x of items) {
+      const li = document.createElement('li');
+      li.textContent = x;
+      ul.appendChild(li);
+    }
+    return [h, ul];
+  };
+  $('fileMore').replaceChildren(...(doc ? [...list('要点', doc.points), ...list('日子', doc.dates.map((x) => `${x.dateZh}：${x.what}`)), ...list('要做的', doc.todo)] : []));
+  // What it says, word for word, a page at a time.
+  $('fileWords').hidden = !d.text;
+  $('fileWords').open = false;
+  $('fileText').textContent = d.text || '';
+  $('fileTextMore').hidden = !d.more;
+  $('fileAsk').hidden = !doc;
+  $('fileOpen').hidden = false;
+  $('fileOpen').href = src;
+  $('fileBack').hidden = false;
+}
+
+$('fileTextMore').addEventListener('click', async () => {
+  if (!shownFile) return;
+  try {
+    const from = shownFile.from + $('fileText').textContent.length;
+    const d = await api(`/api/files/${shownFile.id}/card?from=${from}`);
+    $('fileText').textContent += d.text;
+    $('fileTextMore').hidden = !d.more;
+  } catch {
+    /* the words so far stay */
+  }
+});
+
+// The companion tells her about it: she knows which file it is (it's open).
+$('fileAsk').addEventListener('click', () => {
+  const title = shownFile ? titleOf(shownFile) : '';
+  closeFiles();
+  send(`《${title}》讲了什么？`);
+});
+
+$('filesBtn').addEventListener('click', openFiles);
+$('filesMore').addEventListener('click', () => listFiles(listed));
+$('fileBack').addEventListener('click', showList);
+$('filesClose').addEventListener('click', closeFiles);
+$('files').addEventListener('click', (e) => e.target === $('files') && closeFiles());
+
+// Music or a video from her files is playing.
+const playing = () => [...$('fileShow').querySelectorAll('audio, video')].some((m) => !m.paused && !m.ended);
+
 // ---- live events -------------------------------------------------------------
 // One at a time and in order: a reminder, then Mom's message, then a check-in.
 
@@ -290,7 +449,7 @@ function connectEvents() {
 // talking with her; a line that has waited two minutes is let go.
 async function free() {
   const until = Date.now() + 120000;
-  while (app.busy || app.rec || look.speaking || !$('confirm').hidden) {
+  while (app.busy || app.rec || look.speaking || !$('confirm').hidden || playing()) {
     if (Date.now() > until) return false;
     await sleep(500);
   }
@@ -308,6 +467,7 @@ async function handle(ev) {
   }
   if (ev.type === 'say') return say(ev.line, { mood: ev.mood || null });
   if (ev.type === 'alarm') await chime();
+  if (ev.type === 'files' && !$('files').hidden && !$('fileList').hidden) listFiles(0); // a new one from Mom, while the list is open
   if (ev.line) {
     const p = app.state && app.state.pets[app.state.profile.pet];
     await say(ev.line, { pet: p ? `${p.name}${p.moves[1] || p.moves[0]}` : null });

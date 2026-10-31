@@ -41,8 +41,10 @@ class HttpError extends Error {
   }
 }
 
-
 const READ_WAIT_MS = 25000; // an upload waits this long for her to read it, then answers "pending"
+const TEXT_PAGE = 20000; // a file's words, as much at a time, on MoMo's page
+// Files shown in the page as they are; any other kind is only ever saved.
+const INLINE = /^(image\/(jpeg|png|gif|webp|bmp)|audio\/[\w.+-]+|video\/[\w.+-]+|application\/pdf|text\/plain)$/;
 
 export function createHandler({
   config, store, family, brain, auth, hub, momHub = null, files = null, eyes = null, post = null, notify = null, coach = null, webDir,
@@ -155,6 +157,34 @@ export function createHandler({
     speech(r.line);
     return { ...r, state: kidState() };
   }, { stream: true });
+
+  // MoMo's files: what she sent and what Mom shared with her, newest first (?offset= for
+  // more). fresh: Mom shared it since MoMo last looked.
+  on('GET', '/api/files', 'kid', (ctx) => {
+    const seen = store.getSetting('kidFilesSeen');
+    const offset = Math.max(0, Number(ctx.url.searchParams.get('offset')) || 0);
+    const list = store.listUploads({ forKid: true, offset, limit: 30 });
+    return { ...store.kidFileCount(seen), offset, files: list.map((f) => ({ ...fileCard(f), fresh: f.who === 'mom' && f.shown_at > seen })) };
+  });
+
+  // She has looked at them: none is new any more.
+  on('POST', '/api/files/seen', 'kid', (ctx) => {
+    if (ctx.kid) store.setSetting('kidFilesSeen', Date.now());
+    return { ok: true, state: kidState() };
+  });
+
+  // One of her files, opened: its card and its words (?from= for the next page of them).
+  // The companion now knows which file she means when she asks about "this".
+  on('GET', '/api/files/:id/card', 'kid', (ctx) => {
+    const f = kidFile(ctx.params.id);
+    if (ctx.kid && eyes) eyes.open(f.id);
+    const text = store.getFileText(f.id) || '';
+    const from = Math.min(Math.max(0, Number(ctx.url.searchParams.get('from')) || 0), text.length);
+    return { ...fileCard(f), text: text.slice(from, from + TEXT_PAGE), from, more: from + TEXT_PAGE < text.length };
+  });
+
+  // The file itself, for her page: a picture shown, music or a video played, the rest saved.
+  on('GET', '/api/files/:id', 'kid', (ctx) => fileResponse(ctx, kidFile(ctx.params.id)));
 
   // The tablet's answer to a check-in: { image: JPEG base64, wav?: base64, error? }.
   on('POST', '/api/checks/:id', 'kid', (ctx) => {
@@ -310,17 +340,9 @@ export function createHandler({
     return { date, events, unread: post ? post.unreadForMom() : [] };
   });
 
-  // A photo or file, for Mom's eyes only, sent a piece at a time; ?download=1 saves it
-  // under its own name.
-  on('GET', '/api/parent/files/:id', 'parent', (ctx) => {
-    const f = store.getFile(Number(ctx.params.id));
-    if (!f || !existsSync(need(files, '文件').pathOf(f))) throw new HttpError(404, '这个文件已经删除了');
-    const ext = MIME_EXT[f.mime] || (/\.([a-z0-9]{1,8})$/i.exec(f.name) || [])[1] || 'bin';
-    const name = f.name || `文件${f.id}.${ext}`;
-    const headers = { 'Content-Length': f.bytes, 'Cache-Control': 'private, max-age=3600' };
-    if (ctx.url.searchParams.get('download')) headers['Content-Disposition'] = `attachment; filename="file.${ext}"; filename*=UTF-8''${encodeURIComponent(name)}`;
-    return { status: 200, type: f.mime, headers, stream: files.stream(f) };
-  });
+  // A photo or file, any of them (Mom's page), sent a piece at a time; ?download=1 saves
+  // it under its own name.
+  on('GET', '/api/parent/files/:id', 'parent', (ctx) => fileResponse(ctx, store.getFile(Number(ctx.params.id))));
 
   // A file's card: what it is, how far reading it got, who may ask about it, and what
   // the companion made of it (a document: title, gist, points, dates, things to do).
@@ -350,8 +372,8 @@ export function createHandler({
   on('POST', '/api/parent/files/:id/share', 'parent', (ctx) => {
     const f = store.getFile(Number(ctx.params.id));
     if (!f || f.who === 'tablet') throw new HttpError(404, '这个文件已经删除了');
-    if (f.who === 'kid') throw new HttpError(400, '沫沫发的文件，她都能问');
-    store.setFileShared(f.id, Boolean(ctx.body.kid));
+    if (f.who === 'kid') throw new HttpError(400, '沫沫发的文件，她都能看');
+    if (store.setFileShared(f.id, Boolean(ctx.body.kid)) && eyes) eyes.offer(f, f.result);
     return fileCard(store.getFile(f.id));
   });
 
@@ -523,7 +545,30 @@ export function createHandler({
       tts: Boolean(config.ttsAppId),
       quiet: inQuiet(s.now.minutes, store.getSetting('quiet')),
       looked: lookedToday(s.now.date), // MoMo sees how often Mom looked in through the camera
+      files: store.kidFileCount(store.getSetting('kidFilesSeen')), // { n, fresh }: her files, and the new ones from Mom
     };
+  }
+
+  // A file MoMo may see: hers, or one Mom shared with her.
+  function kidFile(id) {
+    const f = store.getFile(Number(id));
+    if (!f || !(f.who === 'kid' || (f.who === 'mom' && f.shared))) throw new HttpError(404, '没有这个文件');
+    return f;
+  }
+
+  // A stored file, a piece at a time (or the byte range asked for: a video being played).
+  // Shown in the page only if it is a picture, music, a video, a PDF or plain text; any
+  // other kind (a web page, say) is saved, never opened as one of this site's pages.
+  function fileResponse(ctx, f) {
+    if (!f || !existsSync(need(files, '文件').pathOf(f))) throw new HttpError(404, '这个文件已经删除了');
+    const ext = MIME_EXT[f.mime] || (/\.([a-z0-9]{1,8})$/i.exec(f.name) || [])[1] || 'bin';
+    const name = f.name || `文件${f.id}.${ext}`;
+    const range = byteRange(ctx.req.headers.range, f.bytes);
+    if (range === false) return { status: 416, type: 'text/plain', body: Buffer.alloc(0), headers: { 'Content-Range': `bytes */${f.bytes}` } };
+    const headers = { 'Content-Length': range ? range.end - range.start + 1 : f.bytes, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' };
+    if (range) headers['Content-Range'] = `bytes ${range.start}-${range.end}/${f.bytes}`;
+    if (ctx.url.searchParams.get('download') || !INLINE.test(f.mime)) headers['Content-Disposition'] = `attachment; filename="file.${ext}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+    return { status: range ? 206 : 200, type: f.mime, headers, stream: files.stream(f, range) };
   }
 
   // A file as Mom's page shows it.
@@ -614,27 +659,16 @@ export function createHandler({
       headers['Cache-Control'] = /^(img|vid)\//.test(rel) ? 'public, max-age=604800' : 'no-cache';
     }
     // Safari won't play a video unless it can fetch byte ranges of it.
-    let start = 0;
-    let end = st.size - 1;
-    let status = 200;
-    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
-    if (range && (range[1] || range[2])) {
-      if (range[1]) {
-        start = Number(range[1]);
-        if (range[2]) end = Math.min(Number(range[2]), end);
-      } else {
-        start = Math.max(0, st.size - Number(range[2]));
-      }
-      if (start > end) {
-        res.writeHead(416, { 'Content-Range': `bytes */${st.size}` });
-        res.end();
-        return true;
-      }
-      status = 206;
-      headers['Content-Range'] = `bytes ${start}-${end}/${st.size}`;
+    const range = byteRange(req.headers.range, st.size);
+    if (range === false) {
+      res.writeHead(416, { 'Content-Range': `bytes */${st.size}` });
+      res.end();
+      return true;
     }
+    const { start, end } = range || { start: 0, end: st.size - 1 };
+    if (range) headers['Content-Range'] = `bytes ${start}-${end}/${st.size}`;
     headers['Content-Length'] = end - start + 1;
-    res.writeHead(status, headers);
+    res.writeHead(range ? 206 : 200, headers);
     if (!st.size) {
       res.end();
       return true;
@@ -688,7 +722,7 @@ export function createHandler({
         res.writeHead(out.status, { 'Content-Type': out.type, 'Cache-Control': 'no-store', ...out.headers });
         for await (const piece of out.stream) {
           if (res.destroyed) break; // the tablet stopped listening
-          res.write(piece);
+          if (!res.write(piece)) await drained(res); // a big file to a slow tablet isn't held in memory
         }
         res.end();
         return;
@@ -706,6 +740,29 @@ export function createHandler({
       else sendJson(res, status, { error: status >= 500 && !err.status ? '服务器出错了，请稍后再试' : err.message });
     }
   };
+}
+
+// The part of a file a Range header asks for ({ start, end }, inclusive): null for the
+// whole of it, false for a part it doesn't have (416).
+function byteRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header || '');
+  if (!m || !(m[1] || m[2]) || !size) return null;
+  const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+  const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  return start <= end && { start, end };
+}
+
+// Resolves when the response can take more (or is gone).
+function drained(res) {
+  return new Promise((go) => {
+    const done = () => {
+      res.off('drain', done);
+      res.off('close', done);
+      go();
+    };
+    res.on('drain', done);
+    res.on('close', done);
+  });
 }
 
 function sendJson(res, status, obj) {

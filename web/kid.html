@@ -79,6 +79,7 @@
     <div class="talk">
       <button id="mic" class="mic" type="button">按一下说话</button>
       <button id="photoBtn" class="ghost glass round" type="button" aria-label="拍照或发文件给伙伴看">📷</button>
+      <button id="filesBtn" class="ghost glass round" type="button" aria-label="我的文件">📁<b id="filesNew" class="badge" hidden></b></button>
       <button id="kbd" class="ghost glass round" type="button">打字</button>
       <input id="photoInput" type="file" hidden>
     </div>
@@ -100,6 +101,36 @@
     <h2>没有事的时候，在哪儿玩</h2>
     <div id="pickScenes" class="pick places"></div>
     <button id="pickClose" class="ghost" type="button">好啦</button>
+  </div>
+</div>
+
+<!-- Her files: what she sent the companion, and what Mom sent for her to see. -->
+<div id="files" class="sheet" hidden>
+  <div class="sheet-card files-card" role="dialog" aria-labelledby="filesTitle">
+    <section id="fileList">
+      <h2 id="filesTitle">我的文件</h2>
+      <p id="filesNone" class="files-none" hidden>还没有文件。妈妈发给你的、你发给伙伴的，都会放在这里。</p>
+      <ul id="fileItems" class="file-items"></ul>
+      <button id="filesMore" class="ghost" type="button" hidden>再看更早的</button>
+    </section>
+    <section id="fileView" hidden>
+      <h2 id="fileTitle"></h2>
+      <p id="fileMeta" class="file-meta"></p>
+      <div id="fileShow" class="file-show"></div>
+      <p id="fileGist" class="file-gist"></p>
+      <div id="fileMore" class="file-more"></div>
+      <details id="fileWords" class="file-words" hidden>
+        <summary>看原文</summary>
+        <div id="fileText" class="file-text"></div>
+        <button id="fileTextMore" class="ghost" type="button" hidden>接着看</button>
+      </details>
+    </section>
+    <div class="row">
+      <button id="fileAsk" type="button" hidden>讲给我听</button>
+      <a id="fileOpen" class="ghost" href="#" target="_blank" rel="noopener" hidden>打开原文件</a>
+      <button id="fileBack" class="ghost" type="button" hidden>返回</button>
+      <button id="filesClose" class="ghost" type="button">关上</button>
+    </div>
   </div>
 </div>
 

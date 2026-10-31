@@ -81,9 +81,9 @@ export class Files {
     return join(this.root, file.path);
   }
 
-  // The file to send back, a piece at a time.
-  stream(file) {
-    return createReadStream(this.pathOf(file));
+  // The file to send back, a piece at a time (range: { start, end }, just those bytes).
+  stream(file, range = null) {
+    return createReadStream(this.pathOf(file), range ? { start: range.start, end: range.end } : undefined);
   }
 
   read(id) {

@@ -225,7 +225,7 @@ export async function refreshFiles(more = false) {
     ...(library.files.length
       ? library.files.map((f) => {
           const day = new Date(f.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
-          const meta = [`${day} ${f.who === 'kid' ? kid : '妈妈'}`, f.typeZh, f.size || sizeZh(f.bytes), STATUS_ZH[f.status], f.who === 'mom' && f.status === 'read' && (f.shared ? `${kid}也能问` : '只给妈妈')].filter(Boolean).join(' · ');
+          const meta = [`${day} ${f.who === 'kid' ? kid : '妈妈'}`, f.typeZh, f.size || sizeZh(f.bytes), STATUS_ZH[f.status], f.who === 'mom' && f.status !== 'reading' && (f.shared ? `${kid}能看` : '只给妈妈')].filter(Boolean).join(' · ');
           const about = f.snippet || (f.doc ? f.doc.gist : f.summary) || '';
           return h('li', {},
             h('span', { class: 'grow' }, `${FILE_ICON[f.kind] || '📁'} ${f.name || (f.doc && f.doc.title) || '没有名字的文件'}`, h('br'), h('small', { class: 'hint' }, meta), about ? h('br') : null, about ? h('small', {}, about) : null),

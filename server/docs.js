@@ -23,7 +23,7 @@ const DOC_PROMPT = ({ kid, name, today, tomorrow, long }) =>
     '{"kind":"timetable、homework_list、homework_page 或 document",',
     ' "summary":"一句话说清这是什么，20 字以内",',
     ...READ_SHAPES,
-    ' "doc":{"title":"文件的标题，没有就起一个，20 字以内","type":"通知、成绩、课件、作业要求、阅读材料、表格、工作文件或其他","gist":"两三句话说清主要内容，80 字以内","points":["要点，每条 30 字以内，最多 6 条"],"dates":[{"date":"YYYY-MM-DD","what":"那天发生什么、要做什么，20 字以内"}],"todo":["家长或孩子要做的事，每条 20 字以内，最多 5 条"],"forKid":"用 8 岁孩子听得懂的话说一句这是什么，30 字以内"},',
+    ' "doc":{"title":"文件的标题，没有就起一个，20 字以内","type":"通知、成绩、课件、作业要求、阅读材料、表格、工作文件、个人文件（账单、合同、证件、病历等）或其他","gist":"两三句话说清主要内容，80 字以内","points":["要点，每条 30 字以内，最多 6 条"],"dates":[{"date":"YYYY-MM-DD","what":"那天发生什么、要做什么，20 字以内"}],"todo":["家长或孩子要做的事，每条 20 字以内，最多 5 条"],"forKid":"用 8 岁孩子听得懂的话说一句这是什么，30 字以内"},',
     ' "unsure":"拿不准的地方，没有就空字符串"}',
     '规则：',
     ...READ_RULES({ today, tomorrow }),
@@ -112,7 +112,7 @@ function shapeDoc(d, name) {
   const list = (v, max, n) => (Array.isArray(v) ? v : []).map((x) => str(x, max)).filter(Boolean).slice(0, n);
   return {
     title: str(d.title, 30) || str(String(name).replace(/\.[^.]+$/, ''), 30) || '文件',
-    type: str(d.type, 10),
+    type: str(String(d.type || '').replace(/[（(].*$/, ''), 10), // "个人文件（账单…）" -> "个人文件"
     gist: str(d.gist, 160),
     points: list(d.points, 60, 6),
     dates: (Array.isArray(d.dates) ? d.dates : [])

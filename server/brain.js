@@ -363,15 +363,18 @@ export class Brain {
     }
   }
 
-  // Homework MoMo just showed, the parts of a document she just sent that bear on what
-  // she said (userText), and what Mom asked to pass on lately.
+  // Homework MoMo just showed, the parts of the document on her mind (one she just sent,
+  // or opened on her page) that bear on what she said (userText), and what Mom asked to
+  // pass on lately.
   extras(userText = '') {
     const { eyes, post } = this.helpers;
     const doc = eyes ? eyes.currentDocument() : null;
     return {
       homework: eyes ? eyes.currentHomework() : null,
       notes: post ? post.recentForKid() : [],
-      document: doc ? { title: doc.result.doc.title, gist: doc.result.doc.gist, excerpt: excerpts(doc.text, userText, 1500).text } : null,
+      document: doc
+        ? { title: doc.result.doc.title, gist: doc.result.doc.gist, excerpt: excerpts(doc.text, userText, 1500).text, by: doc.who, opened: Boolean(doc.opened) }
+        : null,
     };
   }
 
@@ -628,7 +631,7 @@ function personaPrompt(family, snap, results, { homework = null, notes = [], doc
   if (document) {
     extra.push(
       '',
-      `【文件】${kid}刚才发给你看了《${document.title}》：${document.gist}`,
+      `【文件】${document.opened ? `${kid}正在看${document.by === 'mom' ? '妈妈发给 TA 的' : 'TA 自己发过的'}` : `${kid}刚才发给你看了`}《${document.title}》：${document.gist}`,
       '文件里和 TA 刚才说的话最有关的原文：',
       document.excerpt,
       `TA 问到文件里的内容时，只依据原文回答，原文里没有的就说不知道；用 TA 听得懂的话讲。如果是题目，一次只讲一小步，不直接说出答案。`,

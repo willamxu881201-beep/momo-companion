@@ -87,9 +87,13 @@ const COLUMNS = {
   files: {
     text: 'TEXT', // a document's words, for answering from
     status: "TEXT NOT NULL DEFAULT 'read'", // reading | read | stored (kept, not readable) | failed
-    shared: 'INTEGER NOT NULL DEFAULT 1', // the companion may use it with MoMo too
+    shared: 'INTEGER NOT NULL DEFAULT 1', // MoMo may see it on her page, and the companion use it with her
+    shown_at: 'INTEGER', // when Mom's file was first shared with MoMo (new to her until she looks)
   },
 };
+
+// The files MoMo may see: what she sent, and what Mom shared with her.
+const FOR_KID = "(who = 'kid' OR (who = 'mom' AND shared = 1))";
 
 // Uploads are kept until Mom deletes them (only the tablet's check-in snapshots expire).
 export const FOREVER = 8_640_000_000_000_000;
@@ -97,6 +101,7 @@ export const FOREVER = 8_640_000_000_000_000;
 export const DEFAULT_SETTINGS = {
   cycle: { cycleLength: 6, anchorDate: null, anchorDay: null, schoolWeekdays: [1, 2, 3, 4, 5] },
   profile: { kidName: 'MoMo', girl: 'b', pet: '3' },
+  kidFilesSeen: 0, // when MoMo last looked at her files (ms)
   hidden: { girls: [], pets: [] },
   quiet: { start: '21:30', end: '06:30' },
   kidLink: { key: null },
@@ -354,10 +359,11 @@ export class Store {
 
   // ---- photos and files ------------------------------------------------------
 
-  addFile({ who, kind, mime, name = '', path, bytes, expires }) {
+  // shared: whether MoMo may see it (Mom's files wait until read: eyes.js decides).
+  addFile({ who, kind, mime, name = '', path, bytes, expires, shared = who === 'kid' }) {
     const r = this.db
-      .prepare('INSERT INTO files (at, who, kind, mime, name, path, bytes, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(Date.now(), who, kind, mime, name, path, bytes, expires);
+      .prepare('INSERT INTO files (at, who, kind, mime, name, path, bytes, expires, shared) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Date.now(), who, kind, mime, name, path, bytes, expires, shared ? 1 : 0);
     return Number(r.lastInsertRowid);
   }
 
@@ -385,18 +391,29 @@ export class Store {
     this.db.prepare('UPDATE files SET status = ? WHERE id = ?').run(status, id);
   }
 
+  // Whether MoMo may see one of Mom's files. True when it has just become hers to see.
   setFileShared(id, shared) {
-    this.db.prepare('UPDATE files SET shared = ? WHERE id = ?').run(shared ? 1 : 0, id);
+    const was = this.db.prepare('SELECT shared FROM files WHERE id = ?').get(id);
+    const on = shared ? 1 : 0;
+    this.db.prepare('UPDATE files SET shared = ?, shown_at = CASE WHEN ? = 1 AND shared = 0 THEN ? ELSE shown_at END WHERE id = ?').run(on, on, Date.now(), id);
+    return Boolean(was && on && !was.shared);
   }
 
   // Everything people sent (not the tablet's snapshots), newest first, a page of `limit`
-  // from `offset`; ids: just these, in that order.
-  listUploads({ offset = 0, limit = 30, ids = null } = {}) {
-    const cols = 'id, at, who, kind, mime, name, bytes, result, status, shared, length(text) AS chars';
+  // from `offset`; ids: just these, in that order. forKid: only what MoMo may see (hers,
+  // and what Mom shared with her).
+  listUploads({ offset = 0, limit = 30, ids = null, forKid = false } = {}) {
+    const cols = 'id, at, who, kind, mime, name, bytes, result, status, shared, shown_at, length(text) AS chars';
+    const whose = forKid ? FOR_KID : "who IN ('kid', 'mom')";
     const rows = ids
-      ? ids.map((id) => this.db.prepare(`SELECT ${cols} FROM files WHERE id = ? AND who IN ('kid', 'mom')`).get(id)).filter(Boolean)
-      : this.db.prepare(`SELECT ${cols} FROM files WHERE who IN ('kid', 'mom') ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`).all(limit, offset);
+      ? ids.map((id) => this.db.prepare(`SELECT ${cols} FROM files WHERE id = ? AND ${whose}`).get(id)).filter(Boolean)
+      : this.db.prepare(`SELECT ${cols} FROM files WHERE ${whose} ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`).all(limit, offset);
     return rows.map((f) => ({ ...f, result: f.result ? JSON.parse(f.result) : null }));
+  }
+
+  // How many files MoMo may see, and how many of them Mom shared since `since` (ms).
+  kidFileCount(since = 0) {
+    return plain(this.db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(who = 'mom' AND shown_at > ?), 0) AS fresh FROM files WHERE ${FOR_KID}`).get(since));
   }
 
   uploadStats() {
@@ -407,7 +424,7 @@ export class Store {
   // forKid: only those MoMo may ask about.
   textFiles({ forKid = false } = {}) {
     return this.db
-      .prepare(`SELECT id, at, who, name, result FROM files WHERE text IS NOT NULL AND text != ''${forKid ? " AND (who = 'kid' OR shared = 1)" : ''} ORDER BY at DESC`)
+      .prepare(`SELECT id, at, who, name, result FROM files WHERE text IS NOT NULL AND text != ''${forKid ? ` AND ${FOR_KID}` : ''} ORDER BY at DESC`)
       .all()
       .map((f) => ({ ...f, result: f.result ? JSON.parse(f.result) : null }));
   }

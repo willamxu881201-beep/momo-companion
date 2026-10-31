@@ -29,10 +29,18 @@ const HOMEWORK_TTL_MS = 3 * 3600000; // how long what MoMo just showed stays on 
 const SCAN_PAGES = 200; // pages of a scanned PDF read, at most
 const READ_MAX = 200 * 1024 * 1024; // bigger files are kept but not read
 
-// Mom's papers stay hers, unless they're about school: those the companion may use with
-// MoMo too. (Mom can change it on the file's card.)
-const SCHOOL = /通知|课件|作业|阅读|课程|课表|学习|练习|试卷|成绩|故事/;
-const forMoMo = (r) => r.kind !== 'document' || (SCHOOL.test(`${r.doc.type} ${r.doc.title}`) && !/工作/.test(r.doc.type));
+// What Mom sends is for MoMo to see too (on her page, and to ask the companion about),
+// unless it looks like Mom's own papers: her work, bills, contracts, papers about money
+// or health. Of what can't be read, only pictures, music and videos. Mom can change it
+// on the file's card.
+const PRIVATE = /工作|个人|账单|发票|报销|合同|协议|证件|身份证|护照|户口|银行|保险|贷款|工资|税|病历|体检|诊断|密码/;
+const forMoMo = (r) => !PRIVATE.test(r.kind === 'document' ? `${r.doc.type} ${r.doc.title}` : r.summary || '');
+const MEDIA = /^(image|audio|video)\//;
+const MEDIA_NAME = /\.(jpe?g|png|gif|webp|bmp|heic|mp3|m4a|aac|wav|ogg|oga|opus|flac|amr|mp4|m4v|mov|webm|mkv|avi|3gp)$/i;
+const playable = (f) => MEDIA.test(f.mime || '') || MEDIA_NAME.test(f.name || '');
+// Whether MoMo may see it is decided once, when it is first read (or first kept): read
+// again, it stays as it was, which may be as Mom set it.
+const undecided = (f) => !f.result || f.result.kind === 'failed' || (f.result.kind === 'stored' && !f.shared);
 const CHECK_WAIT_MS = 60000;
 export const CHECK_WHAT = { look: '看看在做什么', piano: '看看在不在练琴', posture: '看看坐姿' };
 const CHECK_LINES = {
@@ -120,8 +128,10 @@ export class Eyes {
   done(f, r) {
     this.store.setFileResult(f.id, r);
     this.store.setFileStatus(f.id, 'read');
-    if (f.who === 'mom') this.store.setFileShared(f.id, forMoMo(r));
-    return this.act({ who: f.who, fileId: f.id, r, name: f.name });
+    const shown = f.who === 'mom' && undecided(f) && this.store.setFileShared(f.id, forMoMo(r));
+    const out = this.act({ who: f.who, fileId: f.id, r, name: f.name });
+    if (shown) this.offer(f, r);
+    return out;
   }
 
   // Kept, but not read: why, in a few words. It goes in the day's record all the same.
@@ -133,7 +143,21 @@ export class Eyes {
     const by = f.who === 'kid' ? this.kid() : '妈妈';
     const named = f.name ? `《${f.name}》` : '一个文件';
     this.family.log(f.who, 'file', `${by}发来${named}（${why}，先存着）`, { fileId: f.id });
+    if (f.who === 'mom' && undecided(f) && this.store.setFileShared(f.id, playable(f))) this.offer(f, { kind: 'stored' });
     return { fileId: f.id, kind: 'stored', summary: why, changes: [], undo: null, line: `收到${f.name ? named : '啦'}，我帮你存好了。不过它${why}。` };
+  }
+
+  // Mom shared a file with MoMo: it is new on her page, and the companion tells her when
+  // she isn't busy (not at quiet time; a timetable or homework list is news of its own).
+  offer(f, r) {
+    const kind = r && r.kind;
+    if (kind === 'timetable' || kind === 'homework_list' || inQuiet(this.family.now().minutes, this.store.getSetting('quiet'))) {
+      this.hub.send({ type: 'refresh' });
+      return;
+    }
+    const name = (f.name || '').replace(/\.[a-z0-9]{1,8}$/i, '');
+    const what = kind === 'document' && r.doc ? `《${r.doc.title}》` : kind === 'homework_page' ? '一页作业' : kind === 'other' ? '一张照片' : name ? `《${name}》` : '一个文件';
+    this.hub.send({ type: 'files', proactive: true, mood: 'happy', line: `${this.kid()}，妈妈给你发来了${what}，点文件夹就能看。` });
   }
 
   // The models failed: kept, and Mom can have it read again (管理 → 文件).
@@ -328,10 +352,23 @@ export class Eyes {
     this.index.delete(id);
   }
 
-  // The document MoMo sent lately (not a timetable or homework: those are acted on), while fresh.
+  // MoMo opened one of her files on her page: when she asks about "this", it's that one.
+  open(id) {
+    this.opened = { id: Number(id), at: Date.now() };
+  }
+
+  // The document on MoMo's mind, while fresh: the one she opened on her page, or the one
+  // she sent, whichever was later (not a timetable or homework: those are acted on).
+  // opened: she is looking at it rather than just sent it.
   currentDocument() {
-    const [d] = this.documents({ who: 'kid', since: Date.now() - HOMEWORK_TTL_MS, limit: 1 });
-    return d && d.result.kind === 'document' ? this.document(d.id) : null;
+    const since = Date.now() - HOMEWORK_TTL_MS;
+    const [sent] = this.documents({ who: 'kid', since, limit: 1 });
+    const o = this.opened;
+    if (o && o.at > since && (!sent || o.at > sent.at)) {
+      const d = this.document(o.id);
+      if (d && d.result.kind === 'document' && (d.who === 'kid' || d.shared)) return { ...d, opened: true };
+    }
+    return sent && sent.result.kind === 'document' ? this.document(sent.id) : null;
   }
 
   // ---- check-ins -----------------------------------------------------------------

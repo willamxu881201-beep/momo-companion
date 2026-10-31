@@ -163,7 +163,7 @@ async function showFile(id) {
   $('docGist').textContent = doc ? doc.gist : d.summary;
   $('docShare').checked = d.shared;
   $('docShare').disabled = d.who === 'kid';
-  $('docShareRow').hidden = d.status !== 'read';
+  $('docShareRow').hidden = d.status === 'reading';
   $('docReread').hidden = !['failed', 'stored'].includes(d.status);
   const list = (title, items) => (items.length ? [el('h3', {}, title), el('ul', {}, ...items.map((x) => el('li', {}, x)))] : []);
   $('docMore').replaceChildren(

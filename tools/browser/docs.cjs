@@ -4,6 +4,7 @@
 //     which subject is weakest; a scanned PDF (read as pictures).
 //  2. The record shows them; a document's card opens.
 //  3. MoMo sends slides from class and asks about them; Mom asks for a summary of them.
+//  4. MoMo's page has Mom's files too: she opens the notice and asks to hear about it.
 const path = require('node:path');
 const { chromium } = require('playwright');
 const { BASE, momContext, kidLink, voiceStub, said, waitSaid, nextSaid, watchErrors, finish } = require('./lib.cjs');
@@ -126,6 +127,26 @@ async function ask(page, text) {
   const cake = await ask(kid, '我发给你的课件里，蛋糕要平均分成几份呀？');
   log(`kid looked it up: ${cake}`);
   expect(/4|四/.test(cake), 'MoMo gets an answer from her slides');
+  // MoMo's files: what Mom sent is on her page too (new, with a red mark); she opens the
+  // notice and asks to hear about it.
+  expect((await kid.textContent('#filesNew')) === '4', `four new from Mom on MoMo's page: ${await kid.textContent('#filesNew')}`);
+  await kid.tap('#filesBtn');
+  await kid.waitForSelector('#files:not([hidden]) #fileItems li');
+  const kidFiles = await kid.$$eval('#fileItems .name', (n) => n.map((x) => x.textContent));
+  log(`MoMo's files: ${kidFiles.join(' | ')}`);
+  expect(kidFiles.length === 5 && kidFiles.some((n) => /运动会/.test(n)) && kidFiles.some((n) => /分数/.test(n)), "Mom's four files and her own slides");
+  await kid.locator('#fileItems button', { hasText: '运动会' }).tap();
+  await kid.waitForSelector('#fileView:not([hidden])');
+  const opened = await kid.evaluate(() => ({ gist: document.getElementById('fileGist').textContent, words: document.getElementById('fileText').textContent.length }));
+  log(`opened: ${JSON.stringify(opened)}`);
+  expect(opened.gist && opened.words > 100, 'the notice opens: what it is, and its words');
+  await kid.screenshot({ path: `${OUT}/5_kid_notice.png` });
+  const before = (await said(kid)).length;
+  await kid.tap('#fileAsk');
+  const told = await answer(kid, before);
+  log(`she tells MoMo: ${told}`);
+  expect(/运动会/.test(told), 'the companion tells MoMo about the file she opened');
+
   const summary = await ask(mom, '总结一下沫沫刚发的课件');
   log(`summary: ${summary}`);
   expect(/分数/.test(summary), "Mom gets a summary of MoMo's slides");
